@@ -1,38 +1,37 @@
-import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
+import { patterns, type Pattern, type InsertPattern } from "@shared/schema";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createPattern(pattern: InsertPattern): Promise<Pattern>;
+  getPattern(id: number): Promise<Pattern | undefined>;
+  listPatterns(): Promise<Pattern[]>;
+  updatePatternStatus(id: number, status: string, svgUrl?: string, dxfUrl?: string): Promise<Pattern>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
+export class DatabaseStorage implements IStorage {
+  async createPattern(pattern: InsertPattern): Promise<Pattern> {
+    const [newPattern] = await db.insert(patterns).values(pattern).returning();
+    return newPattern;
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async getPattern(id: number): Promise<Pattern | undefined> {
+    const [pattern] = await db.select().from(patterns).where(eq(patterns.id, id));
+    return pattern;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+  async listPatterns(): Promise<Pattern[]> {
+    return await db.select().from(patterns).orderBy(patterns.createdAt);
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async updatePatternStatus(id: number, status: string, svgUrl?: string, dxfUrl?: string): Promise<Pattern> {
+    const [updated] = await db
+      .update(patterns)
+      .set({ status, svgUrl, dxfUrl })
+      .where(eq(patterns.id, id))
+      .returning();
+    return updated;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
