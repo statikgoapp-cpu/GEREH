@@ -9,6 +9,22 @@ console.log("SQLite database path:", dbPath);
 
 const sqlite = new Database(dbPath);
 
+function ensureUsersTable() {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
+      plan TEXT NOT NULL DEFAULT 'free',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+}
+
 function ensurePatternsTable() {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS patterns (
@@ -52,6 +68,7 @@ function ensurePatternsColumns() {
 }
 
 try {
+  ensureUsersTable();
   ensurePatternsTable();
   ensurePatternsColumns();
 } catch (error) {
