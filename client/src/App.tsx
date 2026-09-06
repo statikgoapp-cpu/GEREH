@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+﻿import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -7,26 +7,122 @@ import NotFound from "@/pages/not-found";
 import Home from "@/pages/Home";
 import NewPattern from "@/pages/NewPattern";
 import PatternDetails from "@/pages/PatternDetails";
+import RhinestoneTransfer from "@/pages/RhinestoneTransfer";
+import RhinestoneFill from "@/pages/RhinestoneFill";
+import Archive from "@/pages/Archive";
+import Settings from "@/pages/Settings";
+import RhinestoneProductionEdit from "@/pages/RhinestoneProductionEdit";
+import Layout from "@/components/Layout";
+import AuthPage from "./pages/Auth";
+import { MachineControlPanel } from "@/components/MachineControlPanel";
+import { AuthProvider, useAuth } from "./hooks/use-auth";
+
+function ProtectedRoute({
+  component: Component,
+}: {
+  component: React.ComponentType;
+}) {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Redirect to="/auth" />;
+  }
+
+  return <Component />;
+}
+
+function AuthRoute() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-sm text-muted-foreground">Loading...</div>
+      </div>
+    );
+  }
+
+  if (user) {
+    return <Redirect to="/" />;
+  }
+
+  return <AuthPage />;
+}
 
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
-      <Route path="/new" component={NewPattern} />
-      <Route path="/pattern/:id" component={PatternDetails} />
-      {/* Fallback to 404 */}
+      <Route path="/auth" component={AuthRoute} />
+
+      <Route path="/" component={() => <ProtectedRoute component={Home} />} />
+      <Route
+        path="/machine-control"
+        component={() => <ProtectedRoute component={MachineControlPanel} />}
+      />
+      <Route path="/new" component={() => <ProtectedRoute component={NewPattern} />} />
+      <Route
+        path="/rhinestone-transfer"
+        component={() => <ProtectedRoute component={RhinestoneTransfer} />}
+      />
+      <Route
+        path="/rhinestone-fill"
+        component={() => <ProtectedRoute component={RhinestoneFill} />}
+      />
+      <Route
+        path="/archive"
+        component={() => <ProtectedRoute component={Archive} />}
+      />
+      <Route
+        path="/settings"
+        component={() => <ProtectedRoute component={Settings} />}
+      />
+      <Route
+        path="/production-edit"
+        component={() => <ProtectedRoute component={RhinestoneProductionEdit} />}
+      />
+      <Route
+        path="/pattern/:id"
+        component={() => <ProtectedRoute component={PatternDetails} />}
+      />
+
       <Route component={NotFound} />
     </Switch>
+  );
+}
+
+function AppContent() {
+  const { user } = useAuth();
+
+  return (
+    <>
+      {user ? (
+        <Layout>
+          <Router />
+        </Layout>
+      ) : (
+        <Router />
+      )}
+    </>
   );
 }
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <AppContent />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

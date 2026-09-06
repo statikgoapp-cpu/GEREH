@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GEREH License Issuer</title>
+    <style>
+      body { margin: 0; background: #0b1220; color: #e6edf6; font-family: Segoe UI, Arial, sans-serif; }
+      .wrap { max-width: 820px; margin: 20px auto; padding: 0 16px 20px; }
+      .card { background: #111a2b; border: 1px solid #27324a; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+      h1 { margin: 0 0 10px; font-size: 24px; }
+      h2 { margin: 0 0 8px; font-size: 16px; }
+      p { margin: 0 0 8px; color: #9fb0cf; font-size: 14px; }
+      label { display: block; margin: 8px 0 4px; font-size: 13px; color: #b8c7de; }
+      input { width: 100%; box-sizing: border-box; border-radius: 8px; border: 1px solid #30405e; background: #0f1727; color: #fff; padding: 10px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      button { border: 0; border-radius: 8px; padding: 10px 12px; cursor: pointer; font-weight: 700; }
+      .primary { background: #17a2ff; color: #00111f; }
+      .secondary { background: #334155; color: #e5ecf6; }
+      .info { font-size: 13px; color: #c7d5ee; }
+      .mono { font-family: Consolas, "Courier New", monospace; font-size: 12px; color: #a7daff; word-break: break-all; }
+      .msg { min-height: 20px; margin-top: 8px; font-size: 13px; }
+      .ok { color: #77f2ac; }
+      .err { color: #ff8f8f; }
+      textarea { width: 100%; box-sizing: border-box; border-radius: 8px; border: 1px solid #30405e; background: #0f1727; color: #fff; padding: 10px; font-family: Consolas, "Courier New", monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>License Issuer</h1>
+
+      <div class="card">
+        <h2>1) Girdi Dosyalari</h2>
+        <div class="grid">
+          <button id="loadRequest" class="secondary">request.json Yukle</button>
+          <button id="pickPrivateKey" class="secondary">Private Key Sec (.pem)</button>
+        </div>
+        <p class="info">Request:</p>
+        <div id="requestPath" class="mono">-</div>
+        <p class="info">Private key:</p>
+        <div id="privateKeyPath" class="mono">-</div>
+      </div>
+
+      <div class="card">
+        <h2>2) Lisans Bilgileri</h2>
+        <div class="grid">
+          <div>
+            <label for="customer">Musteri</label>
+            <input id="customer" placeholder="Firma A Tekstil" />
+          </div>
+          <div>
+            <label for="product">Urun</label>
+            <input id="product" value="GEREH" />
+          </div>
+        </div>
+        <div class="grid">
+          <div>
+            <label for="expiresAt">Bitis Tarihi (Yerel Saatiniz) *</label>
+            <input id="expiresAt" type="datetime-local" />
+            <p class="info" style="margin-top: 4px;">UTC'ye otomatik dönüştürülecek. Tüm dünyada aynı anda expire olur.</p>
+          </div>
+          <div>
+            <label for="features">Features (opsiyonel, virgul)</label>
+            <input id="features" placeholder="basic,export-dxf,export-pdf" />
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>3) request Ozeti</h2>
+        <p class="info">Device ID:</p>
+        <div id="deviceId" class="mono">-</div>
+        <p class="info">Device Hash:</p>
+        <div id="deviceHash" class="mono">-</div>
+      </div>
+
+      <div class="card">
+        <button id="generate" class="primary">Aktivasyon Key Uret</button>
+        <label for="generatedKey">Uretilen Key</label>
+        <textarea id="generatedKey" rows="4" readonly placeholder="Burada key gorunur..."></textarea>
+        <div id="msg" class="msg"></div>
+      </div>
+    </div>
+
+    <script>
+      const loadRequestBtn = document.getElementById("loadRequest");
+      const pickPrivateKeyBtn = document.getElementById("pickPrivateKey");
+      const generateBtn = document.getElementById("generate");
+      const generatedKeyEl = document.getElementById("generatedKey");
+      const customerEl = document.getElementById("customer");
+      const productEl = document.getElementById("product");
+      const expiresAtEl = document.getElementById("expiresAt");
+      const featuresEl = document.getElementById("features");
+      const requestPathEl = document.getElementById("requestPath");
+      const privateKeyPathEl = document.getElementById("privateKeyPath");
+      const deviceIdEl = document.getElementById("deviceId");
+      const deviceHashEl = document.getElementById("deviceHash");
+      const msgEl = document.getElementById("msg");
+
+      const setMsg = (text, ok) => {
+        msgEl.className = "msg " + (ok ? "ok" : "err");
+        msgEl.textContent = text;
+      };
+
+      loadRequestBtn.addEventListener("click", async () => {
+        const result = await window.issuerApi.loadRequest();
+        if (result?.cancelled) return;
+        if (!result.ok) {
+          setMsg(result.message || "request.json yuklenemedi.", false);
+          return;
+        }
+        requestPathEl.textContent = result.request.path;
+        deviceIdEl.textContent = result.request.deviceId || "-";
+        deviceHashEl.textContent = result.request.deviceHash || "-";
+        setMsg("request.json yuklendi.", true);
+      });
+
+      pickPrivateKeyBtn.addEventListener("click", async () => {
+        const result = await window.issuerApi.pickPrivateKey();
+        if (result?.cancelled) return;
+        if (!result.ok) {
+          setMsg(result.message || "Private key secilemedi.", false);
+          return;
+        }
+        privateKeyPathEl.textContent = result.privateKeyPath;
+        setMsg("Private key secildi.", true);
+      });
+
+      generateBtn.addEventListener("click", async () => {
+        let expiresAtUtc = "";
+        if (expiresAtEl.value) {
+          const localDate = new Date(expiresAtEl.value);
+          expiresAtUtc = localDate.toISOString();
+        }
+        const payload = {
+          customer: customerEl.value,
+          product: productEl.value,
+          expiresAt: expiresAtUtc,
+          features: featuresEl.value,
+        };
+        const result = await window.issuerApi.generateKey(payload);
+        if (result?.cancelled) return;
+        if (!result.ok) {
+          setMsg(result.message || "Key olusturulamadi.", false);
+          return;
+        }
+        generatedKeyEl.value = result.activationKey || "";
+        setMsg("Key olusturuldu: " + result.outputPath, true);
+      });
+    </script>
+  </body>
+</html>

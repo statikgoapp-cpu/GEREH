@@ -1,9 +1,10 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
+const WORKER_MODULE_DIR = typeof __dirname !== "undefined" ? __dirname : process.cwd();
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
+  const distPath = path.resolve(WORKER_MODULE_DIR, "public");
   if (!fs.existsSync(distPath)) {
     throw new Error(
       `Could not find the build directory: ${distPath}, make sure to build the client first`,

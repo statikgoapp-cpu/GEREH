@@ -1,0 +1,318 @@
+﻿===== routes.ts / health + pattern API bölümleri =====
+
+===== 1. HEALTH =====
+app.get("/api/health", async (_req, res) => {
+    try {
+      await storage.listPatterns();
+      return res.status(200).json({ ok: true, status: "healthy" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ ok: false, status: "unhealthy", message });
+    }
+  });
+  
+
+
+  app.use("/api", machineRouter);
+  app.use("/api/auth", authRouter);
+
+  app.use("/uploads", express.static(UPLOAD_DIR));
+  app.use("/processed", express.static(PROCESSED_DIR));
+
+  app.post("/api/export/pdf", express.text({ type: "*/*", limit: "20mb" }), async (req, res) => {
+    try {
+      ensureLicensed();
+      const svg = typeof req.body === "string" ?req.body.trim() : "";
+      if (!/<svg[\s>]/i.test(svg)) {
+        return res.status(400).json({ message: "SVG content is required" });
+      }
+      const buffer = await renderSvgToPdfBuffer(svg);
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", "attachment; filename=\"export.pdf\"");
+      return res.send(buffer);
+    } catch (error) {
+      if (error instanceof Error && error.message === "LICENSE_REQUIRED") {
+        return res.status(403).json({ message: "License required" });
+      }
+      const message = error instanceof Error ?error.message : String(error);
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.post("/api/production-saves", upload.none(), async (req, res) => {
+    try {
+      ensureLicensed();
+      const mode = String(req.body?.mode ??"rhinestone").toLowerCase();
+      const normalizedMode = mode === "pattern" ?"pattern" : "rhinestone";
+      const svg = typeof req.body?.svg === "string" ?req.body.svg : "";
+      const dxf = typeof req.body?.dxf === "string" ?req.body.dxf : "";
+      const plt = typeof req.body?.plt === "string" ?req.body.plt : "";
+      const name = typeof req.body?.name === "string" && req.body.name.trim() ?req.body.name.trim() : `${normalizedMode}-session`;
+      if (!svg.includes("<svg")) {
+        return res.status(400).json({ message: "SVG content is required" });
+      }
+
+
+      const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      const base = `${unique}-${normalizedMode}-session`;
+      const svgFs = path.join(PROCESSED_DIR, `${base}.svg`);
+      const dxfFs = path.join(PROCESSED_DIR, `${base}.dxf`);
+      const pltFs = path.join(PROCESSED_DIR, `${base}.plt`);
+      const pdfFs = path.join(PROCESSED_DIR, `${base}.pdf`);
+      await fsp.writeFile(svgFs, svg, "utf-8");
+      if (dxf.trim().length > 0) await fsp.writeFile(dxfFs, dxf, "utf-8");
+      if (plt.trim().length > 0) await fsp.writeFile(pltFs, plt, "utf-8");
+      const pdfBuffer = await renderSvgToPdfBuffer(svg);
+      await fsp.writeFile(pdfFs, pdfBuffer);
+
+      const svgUrl = `/processed/${base}.svg`;
+      const dxfUrl = dxf.trim().length > 0 ?`/processed/${base}.dxf` : null;
+      const created = await storage.createPattern({
+        name,
+        imageUrl: svgUrl,
+        category: normalizedMode,
+        sizeCode: null,
+        realDiameterMm: null,
+        vectorDiameterMm: null,
+        holeDiameterMm: null,
+      });
+      await storage.updatePatternStatus(created.id, "completed", svgUrl, dxfUrl ??undefined);
+      const archived = await storage.updatePatternArchive(created.id, true);
+      return res.status(201).json(archived);
+    } catch (error) {
+      if (error instanceof Error && error.message === "LICENSE_REQUIRED") {
+        return res.status(403).json({ message: "License required" });
+      }
+      const message = error instanceof Error ?error.message : String(error);
+      return res.status(500).json({ message });
+    }
+  });
+
+  app.get(api.patterns.list.path, async (_req, res) => {
+    const patterns = await storage.listPatterns();
+    res.json(patterns);
+  });
+
+  app.get(api.patterns.get.path, async (req, res) => {
+    const pattern = await storage.getPattern(Number(req.params.id));
+    if (!pattern) return res.status(404).json({ message: "Pattern not found" });
+    res.json(pattern);
+  });
+
+  app.delete(api.patterns.delete.path, async (req, res) => {
+    const deleted = await storage.deletePattern(Number(req.params.id));
+    if (!deleted) return res.status(404).json({ message: "Pattern not found" });
+    res.json({ success: true });
+  });
+
+  app.patch(api.patterns.archive.path, async (req, res) => {
+    const id = Number(req.params.id);
+    const pattern = await storage.getPattern(id);
+    if (!pattern) return res.status(404).json({ message: "Pattern not found" });
+
+    const archived = Boolean(req.body?.archived);
+    if (!archived) {
+      const updated = await storage.updatePatternArchive(id, false);
+      return res.json(updated);
+    }
+    if (pattern.archived) return res.json(pattern);
+    const archivedCopy = await storage.createArchivedCopy(pattern);
+    res.json(archivedCopy);
+  });
+
+  app.post(api.patterns.create.path, upload.single("image"), async (req, res) => {
+    try {
+      ensureLicensed();
+    } catch {
+      return res.status(403).json({ message: "License required" });
+    }
+    if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+    const uploadedFile = req.file;
+    if (!isAllowedUploadFile(uploadedFile)) {
+      return res.status(400).json({
+        message: "Unsupported file type. Allowed: PDF, JPG, JPEG, PNG, WEBP, BMP, TIFF, AVIF, HEIC, HEIF.",
+      });
+    }
+
+    const requestedCategory = String(req.body?.category ??"pattern").toLowerCase();
+    const category =
+      requestedCategory === "rhinestone" || requestedCategory === "hybrid"
+        ?requestedCategory
+        : "pattern";
+    const shouldNormalizeToPng =
+      !isPdfUploadFile(uploadedFile) && (category === "rhinestone" || category === "hybrid");
+    let workerInputPath = uploadedFile.path;
+    let storedImageUrl = `/uploads/${uploadedFile.filename}`;
+
+    if (shouldNormalizeToPng) {
+      try {
+        const normalized = await convertUploadedImageToPng(uploadedFile);
+        workerInputPath = normalized.inputPath;
+        storedImageUrl = normalized.imageUrl;
+      } catch (error) {
+        const message = error instanceof Error ?error.message : String(error);
+        return res.status(400).json({
+          message: `Image conversion to PNG failed: ${message}`,
+        });
+      }
+    }
+
+    const pattern = await storage.createPattern({
+      name: uploadedFile.originalname ??"",
+      imageUrl: storedImageUrl,
+      category,
+      sizeCode: typeof req.body?.sizeCode === "string" ?req.body.sizeCode : null,
+      realDiameterMm: toNumber(req.body?.realDiameterMm, 2.2),
+      vectorDiameterMm: toNumber(req.body?.vectorDiameterMm, 2.2),
+      holeDiameterMm: toNumber(req.body?.holeDiameterMm, 2.4),
+    });
+
+    const options: ProcessOptions = {
+      targetVectorDiameterMm: toNumber(req.body?.targetVectorDiameterMm, null),
+      normalizeStones: String(req.body?.normalizeStones) === "true",
+      pdfDpi: clamp(toNumber(req.body?.pdfDpi, 600) ??600, 72, 1200),
+      threshold: toNumber(req.body?.threshold, null) ??undefined,
+      stoneSensitivity: toNumber(req.body?.stoneSensitivity, 50) ??50,
+      realWidthMm: toNumber(req.body?.realWidthMm, null),
+      calibrationDiameterPx: toNumber(req.body?.calibrationDiameterPx, null),
+      calibrationDiameterMm: toNumber(req.body?.calibrationDiameterMm, null),
+      spacingToleranceMm: toNumber(req.body?.spacingToleranceMm, 0.05),
+      autoPrecision: String(req.body?.autoPrecision ??"true") !== "false",
+      patternRegions: parseRegions(req.body?.patternRegions),
+      rhinestoneRegions: parseRegions(req.body?.rhinestoneRegions),
+      rhinestoneSizeCodes: parseStringArray(req.body?.rhinestoneSizeCodes),
+      useControlNet:
+        category === "rhinestone" || category === "hybrid"
+          ?String(req.body?.useControlNet ??"true") !== "false"
+          : false,
+    };
+    logInfo(`[upload] pattern=${pattern.id} category=${category} sizeCode=${pattern.sizeCode ??"NA"}`);
+
+    enqueueJob(async () => {
+      await runPatternWorker(pattern.id, workerInputPath, options);
+    });
+    res.status(201).json(pattern);
+  });
+
+  return httpServer;
+
+===== 2. AUTHENTICATE TOKEN =====
+export const authenticateToken = (req: any, res: any, next: any) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // "Bearer TOKEN_BURADA"
+
+  if (!token) {
+    return res.status(401).json({ error: "Yetkisiz erişim, token bulunamadı." });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
+    if (err) return res.status(403).json({ error: "Geçersiz veya süresi dolmuş token." });
+    req.user = decoded; // req.user içine { userId, role } bilgilerini ekledik
+    next();
+
+===== 3. PATTERN ROUTE SATIRLARI =====
+
+  server\routes.ts:284:) => {
+  server\routes.ts:285:  ensureLicensed();
+  server\routes.ts:286:  await storage.updatePatternStatus(patternId, "processing");
+> server\routes.ts:287:  const patternMeta = await storage.getPattern(patternId);
+  server\routes.ts:288:  if (!patternMeta) return;
+  server\routes.ts:289:
+  server\routes.ts:290:  const workerConfig = resolveWorkerConfig();
+  server\routes.ts:291:  logInfo(
+  server\routes.ts:292:    `[worker] mode=${workerConfig.isProd ?"prod" : "dev"} pattern=${patternId} path=${workerConfig.workerPath}`
+  server\routes.ts:293:  );
+  server\routes.ts:294:  const worker = new Worker(workerConfig.workerPath, {
+  server\routes.ts:295:    ...(workerConfig.type ?{ type: workerConfig.type } : {}),
+  server\routes.ts:335:export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  server\routes.ts:336:  app.get("/api/health", async (_req, res) => {
+  server\routes.ts:337:    try {
+> server\routes.ts:338:      await storage.listPatterns();
+  server\routes.ts:339:      return res.status(200).json({ ok: true, status: "healthy" });
+  server\routes.ts:340:    } catch (error) {
+  server\routes.ts:341:      const message = error instanceof Error ? error.message : String(error);
+  server\routes.ts:342:      return res.status(500).json({ ok: false, status: "unhealthy", message });
+  server\routes.ts:343:    }
+  server\routes.ts:344:  });
+  server\routes.ts:345:  
+  server\routes.ts:346:
+  server\routes.ts:399:
+  server\routes.ts:400:      const svgUrl = `/processed/${base}.svg`;
+  server\routes.ts:401:      const dxfUrl = dxf.trim().length > 0 ?`/processed/${base}.dxf` : null;
+> server\routes.ts:402:      const created = await storage.createPattern({
+  server\routes.ts:403:        name,
+  server\routes.ts:404:        imageUrl: svgUrl,
+  server\routes.ts:405:        category: normalizedMode,
+  server\routes.ts:406:        sizeCode: null,
+  server\routes.ts:407:        realDiameterMm: null,
+  server\routes.ts:408:        vectorDiameterMm: null,
+  server\routes.ts:409:        holeDiameterMm: null,
+  server\routes.ts:410:      });
+  server\routes.ts:411:      await storage.updatePatternStatus(created.id, "completed", svgUrl, dxfUrl ??undefined);
+> server\routes.ts:412:      const archived = await storage.updatePatternArchive(created.id, true);
+  server\routes.ts:413:      return res.status(201).json(archived);
+  server\routes.ts:414:    } catch (error) {
+  server\routes.ts:415:      if (error instanceof Error && error.message === "LICENSE_REQUIRED") {
+  server\routes.ts:416:        return res.status(403).json({ message: "License required" });
+  server\routes.ts:417:      }
+  server\routes.ts:418:      const message = error instanceof Error ?error.message : String(error);
+  server\routes.ts:419:      return res.status(500).json({ message });
+  server\routes.ts:420:    }
+  server\routes.ts:421:  });
+  server\routes.ts:422:
+> server\routes.ts:423:  app.get(api.patterns.list.path, async (_req, res) => {
+> server\routes.ts:424:    const patterns = await storage.listPatterns();
+  server\routes.ts:425:    res.json(patterns);
+  server\routes.ts:426:  });
+  server\routes.ts:427:
+> server\routes.ts:428:  app.get(api.patterns.get.path, async (req, res) => {
+> server\routes.ts:429:    const pattern = await storage.getPattern(Number(req.params.id));
+  server\routes.ts:430:    if (!pattern) return res.status(404).json({ message: "Pattern not found" });
+  server\routes.ts:431:    res.json(pattern);
+  server\routes.ts:432:  });
+  server\routes.ts:433:
+> server\routes.ts:434:  app.delete(api.patterns.delete.path, async (req, res) => {
+> server\routes.ts:435:    const deleted = await storage.deletePattern(Number(req.params.id));
+  server\routes.ts:436:    if (!deleted) return res.status(404).json({ message: "Pattern not found" });
+  server\routes.ts:437:    res.json({ success: true });
+  server\routes.ts:438:  });
+  server\routes.ts:439:
+> server\routes.ts:440:  app.patch(api.patterns.archive.path, async (req, res) => {
+  server\routes.ts:441:    const id = Number(req.params.id);
+> server\routes.ts:442:    const pattern = await storage.getPattern(id);
+  server\routes.ts:443:    if (!pattern) return res.status(404).json({ message: "Pattern not found" });
+  server\routes.ts:444:
+  server\routes.ts:445:    const archived = Boolean(req.body?.archived);
+  server\routes.ts:446:    if (!archived) {
+> server\routes.ts:447:      const updated = await storage.updatePatternArchive(id, false);
+  server\routes.ts:448:      return res.json(updated);
+  server\routes.ts:449:    }
+  server\routes.ts:450:    if (pattern.archived) return res.json(pattern);
+  server\routes.ts:451:    const archivedCopy = await storage.createArchivedCopy(pattern);
+  server\routes.ts:452:    res.json(archivedCopy);
+  server\routes.ts:453:  });
+  server\routes.ts:454:
+> server\routes.ts:455:  app.post(api.patterns.create.path, upload.single("image"), async (req, res) => {
+  server\routes.ts:456:    try {
+  server\routes.ts:457:      ensureLicensed();
+  server\routes.ts:458:    } catch {
+  server\routes.ts:459:      return res.status(403).json({ message: "License required" });
+  server\routes.ts:460:    }
+  server\routes.ts:461:    if (!req.file) return res.status(400).json({ message: "No image uploaded" });
+  server\routes.ts:462:    const uploadedFile = req.file;
+  server\routes.ts:463:    if (!isAllowedUploadFile(uploadedFile)) {
+  server\routes.ts:489:      }
+  server\routes.ts:490:    }
+  server\routes.ts:491:
+> server\routes.ts:492:    const pattern = await storage.createPattern({
+  server\routes.ts:493:      name: uploadedFile.originalname ??"",
+  server\routes.ts:494:      imageUrl: storedImageUrl,
+  server\routes.ts:495:      category,
+  server\routes.ts:496:      sizeCode: typeof req.body?.sizeCode === "string" ?req.body.sizeCode : null,
+  server\routes.ts:497:      realDiameterMm: toNumber(req.body?.realDiameterMm, 2.2),
+  server\routes.ts:498:      vectorDiameterMm: toNumber(req.body?.vectorDiameterMm, 2.2),
+  server\routes.ts:499:      holeDiameterMm: toNumber(req.body?.holeDiameterMm, 2.4),
+  server\routes.ts:500:    });
+
+
+

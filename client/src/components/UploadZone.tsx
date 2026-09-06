@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud, FileType, X, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -6,24 +6,95 @@ import { cn } from '@/lib/utils';
 import { useCreatePattern } from '@/hooks/use-patterns';
 import { useLocation } from 'wouter';
 
-export function UploadZone() {
+type UploadDefaults = {
+  stoneNormalization: boolean;
+  pdfPreview: boolean;
+};
+
+const DEFAULT_UPLOAD_DEFAULTS: UploadDefaults = {
+  stoneNormalization: true,
+  pdfPreview: true,
+};
+
+const SETTINGS_STORAGE_KEY = "np_settings_v2";
+const ALLOWED_IMAGE_MIME_MAP: Record<string, string[]> = {
+  "image/jpeg": [".jpeg", ".jpg"],
+  "image/png": [".png"],
+  "image/webp": [".webp"],
+  "image/bmp": [".bmp"],
+  "image/tiff": [".tiff", ".tif"],
+};
+
+type UploadZoneProps = {
+  title?: string;
+  description?: string;
+  ctaLabel?: string;
+  dragActiveLabel?: string;
+  className?: string;
+  extraFormFields?: Record<string, string | number | null | undefined>;
+  allowPdf?: boolean;
+  acceptedImageMimeMap?: Record<string, string[]>;
+};
+
+export function UploadZone({
+  title = "Upload Pattern Image",
+  description = "Drag and drop your textile pattern image here, or click to browse. Supported formats: JPG, PNG.",
+  ctaLabel = "Start Digitization",
+  dragActiveLabel = "Drop your pattern here",
+  className,
+  extraFormFields,
+  allowPdf = true,
+  acceptedImageMimeMap = ALLOWED_IMAGE_MIME_MAP,
+}: UploadZoneProps) {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [uploadDefaults, setUploadDefaults] = useState<UploadDefaults>(DEFAULT_UPLOAD_DEFAULTS);
   const createPattern = useCreatePattern();
   const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<UploadDefaults>;
+      setUploadDefaults({
+        stoneNormalization:
+          typeof parsed.stoneNormalization === "boolean"
+            ? parsed.stoneNormalization
+            : DEFAULT_UPLOAD_DEFAULTS.stoneNormalization,
+        pdfPreview:
+          typeof parsed.pdfPreview === "boolean"
+            ? parsed.pdfPreview
+            : DEFAULT_UPLOAD_DEFAULTS.pdfPreview,
+      });
+    } catch {
+      setUploadDefaults(DEFAULT_UPLOAD_DEFAULTS);
+    }
+  }, []);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const selected = acceptedFiles[0];
     if (selected) {
       setFile(selected);
-      setPreview(URL.createObjectURL(selected));
+      if (selected.type === "application/pdf" || selected.name.toLowerCase().endsWith(".pdf")) {
+        setPreview(null);
+      } else {
+        setPreview(URL.createObjectURL(selected));
+      }
     }
   }, []);
+
+  const mergedFormFields = useMemo(() => ({
+    normalizeStones: uploadDefaults.stoneNormalization ? "true" : "false",
+    pdfPreview: uploadDefaults.pdfPreview ? "true" : "false",
+    ...(extraFormFields ?? {}),
+  }), [uploadDefaults, extraFormFields]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      'image/*': ['.jpeg', '.jpg', '.png']
+      ...(allowPdf ? { "application/pdf": [".pdf"] } : {}),
+      ...acceptedImageMimeMap,
     },
     maxFiles: 1,
     multiple: false
@@ -34,6 +105,13 @@ export function UploadZone() {
 
     const formData = new FormData();
     formData.append('image', file);
+    if (mergedFormFields) {
+      Object.entries(mergedFormFields).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== "") {
+          formData.append(key, String(value));
+        }
+      });
+    }
 
     try {
       const result = await createPattern.mutateAsync(formData);
@@ -51,7 +129,7 @@ export function UploadZone() {
   };
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className={cn("w-full max-w-2xl mx-auto", className)}>
       <AnimatePresence mode="wait">
         {!file ? (
           <motion.div
@@ -59,29 +137,31 @@ export function UploadZone() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             key="dropzone"
-            {...getRootProps()}
-            className={cn(
-              "border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300 group",
-              isDragActive 
-                ? "border-primary bg-primary/5 scale-[1.02]" 
-                : "border-border hover:border-primary/50 hover:bg-muted/30"
-            )}
           >
-            <input {...getInputProps()} />
-            <div className="flex flex-col items-center gap-4">
-              <div className={cn(
-                "p-4 rounded-full bg-muted transition-colors duration-300",
-                isDragActive ? "bg-primary text-primary-foreground" : "group-hover:bg-primary/10 group-hover:text-primary"
+            <div
+              {...getRootProps()}
+              className={cn(
+                "border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all duration-300 group",
+                isDragActive
+                  ? "border-primary bg-primary/5 scale-[1.02]"
+                  : "border-border hover:border-primary/50 hover:bg-muted/30"
               )}>
-                <UploadCloud className="w-8 h-8" />
-              </div>
-              <div>
-                <h3 className="font-display font-semibold text-xl text-foreground mb-1">
-                  {isDragActive ? "Drop your pattern here" : "Upload Pattern Image"}
-                </h3>
-                <p className="text-muted-foreground max-w-sm mx-auto">
-                  Drag and drop your textile pattern image here, or click to browse. Supported formats: JPG, PNG.
-                </p>
+              <input {...getInputProps()} />
+              <div className="flex flex-col items-center gap-4">
+                <div className={cn(
+                  "p-4 rounded-full bg-muted transition-colors duration-300",
+                  isDragActive ? "bg-primary text-primary-foreground" : "group-hover:bg-primary/10 group-hover:text-primary"
+                )}>
+                  <UploadCloud className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="font-display font-semibold text-xl text-foreground mb-1">
+                    {isDragActive ? dragActiveLabel : title}
+                  </h3>
+                  <p className="text-muted-foreground max-w-sm mx-auto">
+                    {description}
+                  </p>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -94,11 +174,15 @@ export function UploadZone() {
             className="bg-white rounded-2xl border border-border shadow-lg overflow-hidden"
           >
             <div className="relative h-64 bg-muted/30 flex items-center justify-center border-b border-border">
-              <img 
-                src={preview!} 
-                alt="Preview" 
-                className="h-full object-contain"
-              />
+              {preview ? (
+                <img
+                  src={preview}
+                  alt="Preview"
+                  className="h-full object-contain"
+                />
+              ) : (
+                <div className="text-sm text-muted-foreground">PDF selected</div>
+              )}
               <button 
                 onClick={removeFile}
                 className="absolute top-4 right-4 p-2 rounded-full bg-white/80 hover:bg-red-50 text-muted-foreground hover:text-red-500 border border-border transition-colors shadow-sm"
@@ -142,7 +226,7 @@ export function UploadZone() {
                       Processing...
                     </>
                   ) : (
-                    "Start Digitization"
+                    ctaLabel
                   )}
                 </button>
               </div>

@@ -1,6 +1,51 @@
-node_modules
-dist
+node_modules/
+dist/
 .DS_Store
-server/public
+server/public/
 vite.config.ts.*
 *.tar.gz
+android/.gradle/
+android/local.properties
+android/app/build/
+android/build/
+release/
+license-keys/license-private.pem
+.secrets/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Runtime / local data
+neural.db
+neural.db-*
+uploads/
+public/processed/
+client/public/processed/
+logs/
+.local/
+.npm-cache/
+.venv/
+__pycache__/
+*.pyc
+*.log
+
+# Replit local state
+.replit
+
+# Local audit / temporary files
+gereh-*.txt
+audit_dump.txt
+build.log
+
+# Generated / temporary project files
+GEREH_RENDER_DEPLOYMENT_AUDIT.txt
+GEREH_CLEAN_SOURCE.txt
+GEREH_FOLDER_TREE.txt
+GEREH_PROJECT_SOURCE.txt
+
+# Desktop installer binaries - not needed for web deployment
+desktop/prereqs/*.exe
+desktop/assets/favicons.zip

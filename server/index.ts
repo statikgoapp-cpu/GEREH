@@ -1,10 +1,18 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { logError, logInfo } from "./logger";
+// ADIM 1: Yeni eklenen socket-handler'ı import et
+import { initSocketIO } from "./socket-handler"; 
 
 const app = express();
 const httpServer = createServer(app);
+
+// ADIM 2: Sunucu oluşturulduktan hemen sonra Socket.IO'yu başlat
+// Bu, makineyle olan canlı veri hattını kurar.
+initSocketIO(httpServer);
 
 declare module "http" {
   interface IncomingMessage {
@@ -22,6 +30,19 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// Hard gate for backend/API access when desktop license is not active.
+// main process flips this flag at runtime.
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV !== "production") return next();
+  const licenseAllowed = process.env.NP_LICENSE_ALLOWED === "1";
+  if (licenseAllowed) return next();
+  if (req.path === "/api/health") return next();
+  if (req.path.startsWith("/api") || req.path.startsWith("/uploads") || req.path.startsWith("/processed")) {
+    return res.status(403).json({ ok: false, message: "License required" });
+  }
+  return next();
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -30,10 +51,11 @@ export function log(message: string, source = "express") {
     hour12: true,
   });
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+  logInfo(`${formattedTime} [${source}] ${message}`);
 }
 
 app.use((req, res, next) => {
+  console.log(`GELEN İSTEK: ${req.method} ${req.path}`);
   const start = Date.now();
   const path = req.path;
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
@@ -60,13 +82,15 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // registerRoutes fonksiyonu içinde Replit'ten gelen route'ların 
+  // eklendiğinden emin olmalısın (Genelde server/routes/index.ts içinde yapılır)
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
 
-    console.error("Internal Server Error:", err);
+    logError(`Internal Server Error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
 
     if (res.headersSent) {
       return next(err);
@@ -75,9 +99,6 @@ app.use((req, res, next) => {
     return res.status(status).json({ message });
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
@@ -85,19 +106,10 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
+  const port = parseInt(process.env.PORT || "8100", 10);
+  const host = process.env.HOST || "0.0.0.0";
+
+  httpServer.listen(port, host, () => {
+    log(`serving on http://${host}:${port}`);
+  });
 })();

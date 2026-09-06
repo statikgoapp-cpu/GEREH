@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GEREH Lisans</title>
+    <style>
+      body { font-family: Segoe UI, Arial, sans-serif; background: #0b1220; color: #e6edf6; margin: 0; }
+      .box { max-width: 560px; margin: 36px auto; background: #111a2b; border: 1px solid #27324a; border-radius: 12px; padding: 20px; }
+      h1 { margin: 0 0 8px; font-size: 22px; }
+      p { margin: 0 0 10px; color: #9fb0cf; font-size: 14px; }
+      .hid { margin: 8px 0 12px; font-size: 13px; color: #7fd7ff; }
+      input { width: 100%; box-sizing: border-box; background: #0f1727; border: 1px solid #30405e; color: #fff; border-radius: 8px; padding: 10px; font-family: Consolas, "Courier New", monospace; }
+      .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+      button { background: #17a2ff; color: #00111f; border: 0; border-radius: 8px; font-weight: 700; padding: 10px; cursor: pointer; }
+      .danger { background: #4b1d1d; color: #ffd7d7; }
+      .msg { margin-top: 10px; font-size: 13px; min-height: 18px; word-break: break-word; }
+      .err { color: #ff8f8f; }
+      .ok { color: #77f2ac; }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h1>Lisans Aktivasyonu</h1>
+      <p id="trial"></p>
+      <div id="hid" class="hid">Cihaz Kimliğiniz: -</div>
+      <input id="keyInput" placeholder="NPK1-...." />
+      <div class="actions">
+        <button id="activate">Key ile Aktif Et</button>
+        <button id="request">Request Dosyası Oluştur</button>
+      </div>
+      <div class="actions">
+        <button id="deactivate" class="danger">Deaktif Et</button>
+      </div>
+      <div id="msg" class="msg"></div>
+    </div>
+    <script>
+      const trialEl = document.getElementById("trial");
+      const msgEl = document.getElementById("msg");
+      const keyInput = document.getElementById("keyInput");
+      const hidEl = document.getElementById("hid");
+      const activateBtn = document.getElementById("activate");
+      const requestBtn = document.getElementById("request");
+      const deactivateBtn = document.getElementById("deactivate");
+
+      const setMsg = (text, ok) => {
+        msgEl.className = "msg " + (ok ? "ok" : "err");
+        msgEl.textContent = text;
+      };
+
+      window.licenseApi.getStatus().then((s) => {
+        hidEl.textContent = `Cihaz Kimliğiniz: ${s.deviceId || "-"}`;
+        if (s.blockedReason === "clock_tamper") {
+          trialEl.textContent = "Sistem saati geri alınmış görünüyor. Güvenlik kilidi aktif.";
+          return;
+        }
+        trialEl.textContent = s.activationKeyActive || s.signedLicenseActive
+          ? "Lisans aktif."
+          : "Lisans yok. Önce bu bilgisayarda request dosyası oluşturun, sonra admin aracılığıyla key üretin.";
+      });
+
+      window.licenseApi.onContext((ctx) => {
+        if (ctx?.deviceId) hidEl.textContent = `Cihaz Kimliğiniz: ${ctx.deviceId}`;
+      });
+
+      activateBtn.addEventListener("click", async () => {
+        const result = await window.licenseApi.activate(keyInput.value);
+        if (result.ok) setMsg(result.message || "Lisans aktif edildi.", true);
+        else setMsg(result.message || "Aktivasyon başarısız.", false);
+      });
+
+      requestBtn.addEventListener("click", async () => {
+        const result = await window.licenseApi.exportLicenseRequest();
+        if (result?.cancelled) return;
+        if (result.ok) {
+          setMsg((result.message || "Request dosyası oluşturuldu.") + ` Konum: ${result.path}`, true);
+        } else {
+          setMsg(result.message || "Request dosyası oluşturulamadı.", false);
+        }
+      });
+
+      deactivateBtn.addEventListener("click", async () => {
+        const result = await window.licenseApi.deactivate();
+        if (result.ok) setMsg("Lisans deaktif edildi. Bu key tekrar kullanılamaz.", true);
+        else setMsg("Deaktivasyon başarısız.", false);
+      });
+    </script>
+  </body>
+</html>

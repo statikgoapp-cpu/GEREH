@@ -1,36 +1,11 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
+import { copyFile, mkdir, rm, readFile } from "fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
-const allowlist = [
-  "@google/generative-ai",
-  "axios",
-  "connect-pg-simple",
-  "cors",
-  "date-fns",
-  "drizzle-orm",
-  "drizzle-zod",
-  "express",
-  "express-rate-limit",
-  "express-session",
-  "jsonwebtoken",
-  "memorystore",
-  "multer",
-  "nanoid",
-  "nodemailer",
-  "openai",
-  "passport",
-  "passport-local",
-  "pg",
-  "stripe",
-  "uuid",
-  "ws",
-  "xlsx",
-  "zod",
-  "zod-validation-error",
-];
+// For desktop packaging stability, keep third-party deps external.
+// This avoids partial bundling chains that can trigger missing-module
+// crashes inside app.asar (e.g. call-bind-apply-helpers).
+const allowlist: string[] = [];
 
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
@@ -59,6 +34,22 @@ async function buildAll() {
     external: externals,
     logLevel: "info",
   });
+
+  await esbuild({
+    entryPoints: ["server/image-worker.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outfile: "dist/image-worker.cjs",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    minify: true,
+    external: externals,
+    logLevel: "info",
+  });
+
+  await mkdir("dist", { recursive: true });
 }
 
 buildAll().catch((err) => {

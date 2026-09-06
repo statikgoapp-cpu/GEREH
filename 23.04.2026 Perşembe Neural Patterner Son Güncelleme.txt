@@ -1,0 +1,64 @@
+23.04.2026 Perşembe GEREH Son Güncelleme:
+DÜZELTMELER SON GÜNCELLEMELER:
+
+Dashboard grid’i daha sıkı hale getirildi: Home.tsx (line 166), Home.tsx (line 216)
+Archive grid’i aynı şekilde küçültüldü: Archive.tsx (line 138), Archive.tsx (line 162)
+Bu iki sayfada kartlara compact modu verildi: Home.tsx (line 225), Archive.tsx (line 170)
+PatternCard içine sadece bu kullanım için compact boyut varyantı eklendi: PatternCard.tsx (line 50), PatternCard.tsx (line 129), PatternCard.tsx (line 136)
+
+
+24.04.2026 Cuma:
+
+Rhinestone Size Guide artık hem Rhinestone Transfer hem de Hybrid Transfer içinde tıklanamaz, sadece liste olarak görünüyor.
+
+Güncellenen dosyalar:
+
+RhinestoneTransfer.tsx
+HybridTransfer.tsx
+Yapılanlar:
+
+Satırlardaki onClick={() => setSelectedCode(...)} kaldırıldı.
+cursor-pointer, hover ve seçili satır vurgusu kaldırıldı.
+Kullanılmayan setSelectedCode state setter temizlendi.
+
+RhinestoneProductionEdit.tsx içinde sadece en üst menü satırını modernize ettim; diğer bölümlere dokunmadım.
+
+Güncellenen yer:
+
+RhinestoneProductionEdit.tsx (line 2401)
+Yaptığım modernizasyon:
+
+Üst menüyü kart görünümüne aldım (rounded-2xl, border, hafif blur/shadow).
+Başlık alanını daha temiz tipografi ve boşluklarla düzenledim.
+Sağdaki kontrol grubunu responsive olacak şekilde flex-wrap yaptım.
+select, upload, save/load, undo, fit, export butonlarını daha modern ve tutarlı (h-10, rounded-xl, shadow-sm, hover/focus geçişleri) hale getirdim.
+Hiçbir işlev/handler değiştirilmedi; sadece üst satırın UI düzeni/stilleri güncellendi.
+
+
+
+
+Hayır, sistemde “her şeyi PNG’ye çevirip sonra export etme” gibi tek tip bir akış yok. Durum formata göre değişiyor:
+
+PDF input: Evet, işlem motoruna girmeden önce geçici PNG’ye çevriliyor.
+image-worker.ts (line 2814)
+image-worker.ts (line 2821)
+Sonra bu temp klasör siliniyor:
+image-worker.ts (line 3009)
+
+JPG/JPEG/PNG/WEBP/BMP/TIFF input: Diskte PNG dosyası üretmek zorunlu değil ama içeride işleme sırasında PNG buffer kullanılıyor.
+image-worker.ts (line 2293)
+image-worker.ts (line 1071)
+
+SVG input (upload): Bu upload endpoint’te desteklenmiyor (SVG allowed listede yok).
+routes.ts (line 30)
+routes.ts (line 38)
+
+DXF input: PNG’ye çevrilmiyor; doğrudan parse ediliyor.
+RhinestoneProductionEdit.tsx (line 1722)
+
+Export aşaması: Export’ta PNG’ye dönme yok; çıktı SVG/DXF/PLT/PDF olarak üretiliyor.
+RhinestoneProductionEdit.tsx (line 2485)
+RhinestoneProductionEdit.tsx (line 2508)
+RhinestoneProductionEdit.tsx (line 2496)
+
+Kısacası: PDF kesin PNG’ye çevrilip işleniyor, raster görsellerde de iç pipeline’da PNG buffer kullanımı var; ama exporta geçişin genel kuralı “önce PNG” değil.

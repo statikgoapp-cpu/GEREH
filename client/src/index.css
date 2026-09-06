@@ -5,49 +5,153 @@
 @tailwind utilities;
 
 :root {
-  /* Industrial / Technical Palette */
-  --background: 220 14% 96%;
-  --foreground: 222 47% 11%;
-  
-  --primary: 222 47% 11%; /* Deep Navy/Black */
+  /* Light theme */
+  --background: 210 25% 98%;
+  --foreground: 222 35% 12%;
+
+  --primary: 216 65% 16%;
   --primary-foreground: 210 40% 98%;
-  
-  --secondary: 0 0% 100%;
-  --secondary-foreground: 222 47% 11%;
-  
-  --muted: 220 14% 90%;
-  --muted-foreground: 215 16% 47%;
-  
-  --accent: 262 83% 58%; /* Purple accent for "Neural" feel */
-  --accent-foreground: 210 40% 98%;
-  
+
+  --secondary: 210 22% 96%;
+  --secondary-foreground: 222 35% 12%;
+
+  --muted: 210 18% 92%;
+  --muted-foreground: 215 18% 45%;
+
+  --accent: 188 92% 52%;
+  --accent-foreground: 216 65% 16%;
+
   --destructive: 0 84% 60%;
   --destructive-foreground: 210 40% 98%;
 
-  --border: 220 13% 85%;
-  --input: 220 13% 85%;
-  --ring: 222 47% 11%;
-  
-  --radius: 0.5rem;
-  
+  --border: 214 25% 86%;
+  --input: 214 25% 86%;
+  --ring: 188 92% 52%;
+
+  --radius: 0.9rem;
+
+  --app-bg: radial-gradient(900px 600px at 15% -20%, rgba(6, 182, 212, 0.12), transparent 60%),
+             radial-gradient(700px 500px at 85% -10%, rgba(15, 23, 42, 0.08), transparent 55%),
+             linear-gradient(160deg, rgba(248, 250, 252, 1), rgba(238, 246, 250, 1));
+
   --font-display: 'Space Grotesk', sans-serif;
   --font-body: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
 
+.dark {
+  /* Dark theme */
+  --background: 222 35% 8%;
+  --foreground: 210 40% 96%;
+
+  --primary: 216 65% 14%;
+  --primary-foreground: 210 40% 98%;
+
+  --secondary: 222 25% 12%;
+  --secondary-foreground: 210 40% 96%;
+
+  --muted: 222 22% 14%;
+  --muted-foreground: 215 20% 68%;
+
+  --accent: 188 95% 55%;
+  --accent-foreground: 216 65% 14%;
+
+  --border: 222 20% 20%;
+  --input: 222 20% 20%;
+  --ring: 188 95% 55%;
+
+  --app-bg: radial-gradient(900px 600px at 10% -20%, rgba(6, 182, 212, 0.18), transparent 60%),
+            radial-gradient(800px 500px at 90% -10%, rgba(15, 23, 42, 0.35), transparent 55%),
+            linear-gradient(160deg, rgba(8, 13, 24, 0.98), rgba(10, 18, 34, 0.98));
+}
+
 @layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
   body {
-    @apply bg-background text-foreground antialiased selection:bg-accent/20 selection:text-accent-foreground;
+    @apply bg-background text-foreground antialiased selection:bg-accent/25 selection:text-accent-foreground;
     font-family: var(--font-body);
+    background-image: var(--app-bg);
+    background-attachment: fixed;
   }
 
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
-    @apply font-bold tracking-tight text-primary;
+    @apply font-semibold tracking-tight text-foreground;
   }
-  
+
   code, pre {
     font-family: var(--font-mono);
+  }
+
+  /* Dark mode: ensure light surfaces use dark text for contrast */
+  .dark :is(.bg-white, .bg-white\/80, .bg-white\/90) {
+    background-color: hsl(var(--secondary));
+    color: hsl(var(--secondary-foreground));
+  }
+
+  .dark :is(.bg-white, .bg-white\/80, .bg-white\/90) .text-foreground {
+    color: hsl(var(--secondary-foreground));
+  }
+
+  .dark :is(.bg-white, .bg-white\/80, .bg-white\/90) .text-muted-foreground {
+    color: hsl(var(--muted-foreground));
+  }
+
+
+  /* Global contrast compatibility layer for legacy hard-coded utility colors. */
+  .dark :is(.bg-white, .bg-white\/80, .bg-white\/90, .bg-slate-50, .bg-gray-50, .bg-red-50) {
+    background-color: hsl(var(--secondary));
+    border-color: hsl(var(--border));
+  }
+
+  .dark :is(
+    .text-slate-900,
+    .text-slate-800,
+    .text-slate-700,
+    .text-slate-600,
+    .text-gray-900,
+    .text-gray-800,
+    .text-gray-700,
+    .text-gray-600,
+    .text-black
+  ) {
+    color: hsl(var(--foreground));
+  }
+
+  .dark :is(.hover\:bg-white:hover, .hover\:bg-slate-50:hover, .hover\:bg-red-50:hover) {
+    background-color: hsl(var(--muted));
+  }
+
+  .dark :is(.bg-slate-950, .bg-slate-900, .bg-black, .bg-black\/90, .bg-black\/70) {
+    color: hsl(var(--foreground));
+  }
+
+  :root:not(.dark) :is(.bg-slate-950, .bg-slate-900, .bg-black, .bg-black\/90, .bg-black\/70, .bg-slate-700) {
+    color: hsl(var(--primary-foreground));
+  }
+
+  :root:not(.dark) :is(
+    .bg-primary,
+    .bg-destructive,
+    .bg-red-600,
+    .bg-amber-600,
+    .bg-blue-600,
+    .bg-purple-600,
+    .bg-emerald-600,
+    .bg-green-500,
+    .bg-sky-500
+  ) {
+    color: hsl(var(--primary-foreground));
+  }
+
+  :root:not(.dark) :is(.bg-white, .bg-gray-50, .bg-slate-50, .bg-red-50) :is(.text-white, .text-slate-100, .text-gray-100) {
+    color: hsl(var(--foreground));
   }
 }
 
@@ -55,25 +159,37 @@
   .text-balance {
     text-wrap: balance;
   }
-  
-  /* Glassmorphism utility */
+
   .glass {
-    @apply bg-white/70 backdrop-blur-lg border border-white/20 shadow-xl;
+    @apply bg-white/6 backdrop-blur-md border border-white/15 shadow-[0_12px_40px_0_rgba(6,182,212,0.08)];
   }
-  
-  /* Neural grid background pattern */
+
+  .neon-glow {
+    text-shadow: 0 0 8px hsl(var(--accent) / 0.45), 0 0 16px hsl(var(--accent) / 0.25);
+  }
+
+  .neon-border {
+    box-shadow: 0 0 10px hsl(var(--accent) / 0.35);
+    @apply border-accent/40;
+  }
+
   .bg-grid-pattern {
-    background-size: 40px 40px;
-    background-image: 
-      linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+    background-size: 56px 56px;
+    background-image:
+      linear-gradient(to right, hsl(var(--accent) / 0.08) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--accent) / 0.08) 1px, transparent 1px);
+  }
+
+  .touch-none {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 }
 
-/* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -81,5 +197,15 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-border rounded-full hover:bg-muted-foreground/50 transition-colors;
+  @apply bg-white/10 rounded-full hover:bg-accent/40 transition-colors;
+}
+
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+  }
 }

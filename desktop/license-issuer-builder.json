@@ -1,0 +1,29 @@
+{
+  "appId": "com.gereh.licenseissuer",
+  "productName": "GEREH License Issuer",
+  "directories": {
+    "output": "release/license-issuer"
+  },
+  "files": [
+    "desktop/license-issuer-main.cjs",
+    "desktop/license-issuer-preload.cjs",
+    "desktop/license-issuer.html",
+    "desktop/assets/icon.ico",
+    "package.json"
+  ],
+  "extraMetadata": {
+    "main": "desktop/license-issuer-main.cjs"
+  },
+  "win": {
+    "icon": "desktop/assets/icon.ico",
+    "target": [
+      {
+        "target": "portable",
+        "arch": [
+          "x64"
+        ]
+      }
+    ]
+  },
+  "artifactName": "GEREH-License-Issuer-${version}.${ext}"
+}

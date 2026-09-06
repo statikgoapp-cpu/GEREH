@@ -1,0 +1,80 @@
+import { patterns, type Pattern, type InsertPattern } from "@shared/schema";
+import { db } from "./db";
+import { desc, eq } from "drizzle-orm";
+
+export interface IStorage {
+  createPattern(pattern: InsertPattern): Promise<Pattern>;
+  getPattern(id: number): Promise<Pattern | undefined>;
+  listPatterns(): Promise<Pattern[]>;
+  updatePatternStatus(id: number, status: string, svgUrl?: string, dxfUrl?: string): Promise<Pattern>;
+  updatePatternArchive(id: number, archived: boolean): Promise<Pattern>;
+  createArchivedCopy(pattern: Pattern): Promise<Pattern>;
+  deletePattern(id: number): Promise<boolean>;
+}
+
+export class DatabaseStorage implements IStorage {
+  async createPattern(pattern: InsertPattern): Promise<Pattern> {
+    const [newPattern] = await db
+      .insert(patterns)
+      .values({ ...pattern, createdAt: new Date().toISOString() })
+      .returning();
+    return newPattern;
+  }
+
+  async getPattern(id: number): Promise<Pattern | undefined> {
+    const [pattern] = await db.select().from(patterns).where(eq(patterns.id, id));
+    return pattern;
+  }
+
+  async listPatterns(): Promise<Pattern[]> {
+    return await db.select().from(patterns).orderBy(desc(patterns.createdAt));
+  }
+
+  async updatePatternStatus(id: number, status: string, svgUrl?: string, dxfUrl?: string): Promise<Pattern> {
+    const [updated] = await db
+      .update(patterns)
+      .set({ status, svgUrl, dxfUrl })
+      .where(eq(patterns.id, id))
+      .returning();
+    return updated;
+  }
+
+  async updatePatternArchive(id: number, archived: boolean): Promise<Pattern> {
+    const [updated] = await db
+      .update(patterns)
+      .set({ archived })
+      .where(eq(patterns.id, id))
+      .returning();
+    return updated;
+  }
+
+  async createArchivedCopy(pattern: Pattern): Promise<Pattern> {
+    const [created] = await db
+      .insert(patterns)
+      .values({
+        name: pattern.name ??"",
+        imageUrl: pattern.imageUrl,
+        svgUrl: pattern.svgUrl ??null,
+        dxfUrl: pattern.dxfUrl ??null,
+        category: pattern.category ??"pattern",
+        sizeCode: pattern.sizeCode ??null,
+        realDiameterMm: pattern.realDiameterMm ??null,
+        vectorDiameterMm: pattern.vectorDiameterMm ??null,
+        holeDiameterMm: pattern.holeDiameterMm ??null,
+        status: pattern.status,
+        archived: true,
+        createdAt: pattern.createdAt ??new Date().toISOString(),
+      })
+      .returning();
+    return created;
+  }
+
+  async deletePattern(id: number): Promise<boolean> {
+    const existing = await this.getPattern(id);
+    if (!existing) return false;
+    await db.delete(patterns).where(eq(patterns.id, id));
+    return true;
+  }
+}
+
+export const storage = new DatabaseStorage();
