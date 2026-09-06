@@ -43,17 +43,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPatternByFileUrl(fileUrl: string, userId: number): Promise<Pattern | undefined> {
+    const fileUrlConditions = [
+      eq(patterns.imageUrl, fileUrl),
+      eq(patterns.svgUrl, fileUrl),
+      eq(patterns.dxfUrl, fileUrl),
+    ];
+
+    if (/\.pdf$/i.test(fileUrl)) {
+      const baseUrl = fileUrl.replace(/\.pdf$/i, "");
+      fileUrlConditions.push(
+        eq(patterns.svgUrl, `${baseUrl}.svg`),
+        eq(patterns.dxfUrl, `${baseUrl}.dxf`),
+      );
+    }
+
     const [pattern] = await db
       .select()
       .from(patterns)
       .where(
         and(
           eq(patterns.userId, userId),
-          or(
-            eq(patterns.imageUrl, fileUrl),
-            eq(patterns.svgUrl, fileUrl),
-            eq(patterns.dxfUrl, fileUrl),
-          ),
+          or(...fileUrlConditions),
         ),
       );
 
