@@ -1,17 +1,20 @@
 import nodemailer from "nodemailer";
+import dns from "node:dns/promises";
 import { logInfo } from "./logger";
 
 const feedbackRecipient = process.env.FEEDBACK_EMAIL_TO || "statikgoapp@gmail.com";
 
-const getTransporter = () => {
+const getTransporter = async () => {
   const host = process.env.SMTP_HOST;
   const user = process.env.SMTP_USER;
   const password = process.env.SMTP_PASSWORD;
   const port = Number(process.env.SMTP_PORT || 587);
   if (!host || !user || !password) return null;
 
+  const ipv4Address = (await dns.lookup(host, { family: 4 })).address;
+
   const transportOptions = {
-    host,
+    host: ipv4Address,
     port,
     secure: process.env.SMTP_SECURE === "true",
     requireTLS: port === 587,
@@ -20,6 +23,7 @@ const getTransporter = () => {
     greetingTimeout: 10_000,
     socketTimeout: 15_000,
     auth: { user, pass: password },
+    tls: { servername: host },
   } as any;
 
   return nodemailer.createTransport(transportOptions);
@@ -34,7 +38,7 @@ export async function sendFeedbackEmail(feedback: {
   page: string;
   createdAt: string;
 }) {
-  const transporter = getTransporter();
+  const transporter = await getTransporter();
   if (!transporter) {
     throw new Error("Feedback SMTP environment variables are not configured");
   }
