@@ -14,11 +14,17 @@ import { api } from "@shared/routes";
 import { logError, logInfo } from "./logger";
 import machineRouter from "./machine-routes";
 import { authRouter, authenticateToken } from "./auth";
+import { db } from "./db";
+import { createFeedbackSchema, feedback, users } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import { sendFeedbackEmail } from "./feedback-email";
 
 
 
 const UPLOAD_DIR = "uploads";
 const PROCESSED_DIR = "public/processed";
+const recentFeedback = new Map<string, number>();
+const FEEDBACK_COOLDOWN_MS = 30_000;
 const WORKER_MODULE_DIR = typeof __dirname !== "undefined" ? __dirname : process.cwd();
 const ALLOWED_IMAGE_TYPES = new Set([
   "image/jpeg",
@@ -346,6 +352,57 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 
   app.use("/api/auth", authRouter);
+
+  app.post("/api/feedback", authenticateToken, async (req: any, res) => {
+    const parsed = createFeedbackSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Geçersiz geri bildirim." });
+    }
+
+    const userId = Number(req.user.userId);
+    const rateKey = `${userId}:${parsed.data.category}:${parsed.data.message}`;
+    const now = Date.now();
+    const lastSubmittedAt = recentFeedback.get(rateKey);
+    if (lastSubmittedAt && now - lastSubmittedAt < FEEDBACK_COOLDOWN_MS) {
+      return res.status(429).json({ error: "Lütfen aynı geri bildirimi tekrar göndermeden önce bekleyin." });
+    }
+    recentFeedback.set(rateKey, now);
+
+    try {
+      const [user] = await db.select({ id: users.id, email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
+      if (!user) return res.status(401).json({ error: "Oturum geçersiz." });
+
+      const createdAt = new Date().toISOString();
+      const [created] = await db.insert(feedback).values({
+        userId: user.id,
+        email: user.email,
+        category: parsed.data.category,
+        message: parsed.data.message,
+        page: parsed.data.page,
+        userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"].slice(0, 500) : null,
+        status: "NEW",
+        createdAt,
+        updatedAt: createdAt,
+      }).returning();
+
+      try {
+        await sendFeedbackEmail(created);
+      } catch (emailError) {
+        logError(`Feedback email notification failed for id=${created.id}: ${String(emailError)}`);
+      }
+
+      return res.status(201).json({
+        id: created.id,
+        status: created.status,
+        message: "Teşekkürler. Geri bildiriminiz GEREH'in geliştirilmesine yardımcı oluyor.",
+      });
+    } catch (error) {
+      recentFeedback.delete(rateKey);
+      logError(`Feedback creation failed: ${String(error)}`);
+      return res.status(500).json({ error: "Geri bildirim gönderilirken bir hata oluştu." });
+    }
+  });
+
   app.use("/api", authenticateToken, machineRouter);
 
   const serveOwnedFile = (directory: string, urlPrefix: string) =>

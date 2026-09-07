@@ -25,15 +25,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const fetchUser = async () => {
-      // Token yoksa hiç backend'e gitme, yüklemeyi bitir
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
-
       try {
         const res = await fetch("/api/auth/me", {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          credentials: "include",
         });
         
         if (res.ok) {
@@ -63,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Çıkış yapıldığında çalışacak fonksiyon
   const logout = () => {
+    void fetch("/api/auth/logout", { method: "POST", credentials: "include" }).catch(() => undefined);
     localStorage.removeItem("token");
     setToken(null);
     setUser(null);

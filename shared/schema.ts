@@ -31,6 +31,19 @@ export const patterns = sqliteTable("patterns", {
   createdAt: text("created_at").notNull().default(new Date().toISOString()),
 });
 
+export const feedback = sqliteTable("feedback", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  email: text("email").notNull(),
+  category: text("category").notNull(),
+  message: text("message").notNull(),
+  page: text("page").notNull().default("/"),
+  userAgent: text("user_agent"),
+  status: text("status").notNull().default("NEW"),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
@@ -48,6 +61,20 @@ export const loginUserSchema = z.object({
   password: z.string().min(1, "Şifre gereklidir"),
 });
 
+export const feedbackCategorySchema = z.enum([
+  "Hata Bildir",
+  "Öneri",
+  "Beğendim",
+  "Memnun Kalmadım",
+  "Diğer",
+]);
+
+export const createFeedbackSchema = z.object({
+  category: feedbackCategorySchema,
+  message: z.string().trim().min(1, "Mesaj zorunludur.").max(2000, "Mesaj 2000 karakteri geçemez."),
+  page: z.string().trim().max(200, "Sayfa bilgisi geçersiz.").optional().default("/"),
+});
+
 export const insertPatternSchema = createInsertSchema(patterns).omit({
   id: true,
   createdAt: true,
@@ -56,4 +83,5 @@ export const insertPatternSchema = createInsertSchema(patterns).omit({
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Pattern = typeof patterns.$inferSelect;
+export type Feedback = typeof feedback.$inferSelect;
 export type InsertPattern = z.infer<typeof insertPatternSchema>;

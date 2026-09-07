@@ -2,9 +2,8 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { eq } from "drizzle-orm";
-// Kendi DB bağlantı dosyanın yolunu buraya yaz (örnek: ./db)
-import { db } from "./db"; 
-import { users } from "../shared/schema";
+import { db } from "./db";
+import { loginUserSchema, registerUserSchema, users } from "../shared/schema";
 
 export const authRouter = Router();
 
@@ -22,6 +21,14 @@ const setAuthCookie = (res: any, token: string) => {
   );
 };
 
+const clearAuthCookie = (res: any) => {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
+  res.setHeader(
+    "Set-Cookie",
+    `gereh_token=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${secure}`,
+  );
+};
+
 const getCookieToken = (cookieHeader: string | undefined) => {
   const match = cookieHeader?.match(/(?:^|;\s*)gereh_token=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : undefined;
@@ -32,11 +39,15 @@ const getCookieToken = (cookieHeader: string | undefined) => {
 // ==========================================
 authRouter.post("/register", async (req, res) => {
   try {
-    const { email, password, name } = req.body;
-
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: "Lütfen tüm alanları doldurun." });
+    const parsed = registerUserSchema.safeParse({
+      email: typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : req.body?.email,
+      password: req.body?.password,
+      name: typeof req.body?.name === "string" ? req.body.name.trim() : req.body?.name,
+    });
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Geçersiz kayıt bilgileri." });
     }
+    const { email, password, name } = parsed.data;
 
     // Email kullanımda mı kontrol et
     const existingUser = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -67,6 +78,9 @@ authRouter.post("/register", async (req, res) => {
 
     res.status(201).json({ user: safeUser, token });
   } catch (error) {
+    if (String(error).includes("UNIQUE constraint failed: users.email")) {
+      return res.status(409).json({ error: "Bu e-posta adresi zaten kullanımda." });
+    }
     console.error("Register Error:", error);
     res.status(500).json({ error: "Kayıt işlemi sırasında bir hata oluştu." });
   }
@@ -77,7 +91,14 @@ authRouter.post("/register", async (req, res) => {
 // ==========================================
 authRouter.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const parsed = loginUserSchema.safeParse({
+      email: typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : req.body?.email,
+      password: req.body?.password,
+    });
+    if (!parsed.success) {
+      return res.status(401).json({ error: "Geçersiz e-posta veya şifre." });
+    }
+    const { email, password } = parsed.data;
 
     // Kullanıcıyı veritabanında bul
     const userResult = await db.select().from(users).where(eq(users.email, email)).limit(1);
@@ -103,6 +124,11 @@ authRouter.post("/login", async (req, res) => {
     console.error("Login Error:", error);
     res.status(500).json({ error: "Giriş işlemi sırasında bir hata oluştu." });
   }
+});
+
+authRouter.post("/logout", (_req, res) => {
+  clearAuthCookie(res);
+  res.status(204).send();
 });
 
 // ==========================================

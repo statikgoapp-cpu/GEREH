@@ -9,10 +9,11 @@ import {
   Gem,
   SlidersHorizontal,
   Sparkles,
-  Menu // İkon eklendi
+  Menu, // İkon eklendi
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/i18n";
+import FeedbackDialog from "./FeedbackDialog";
 
 // Sidebar propları
 interface SidebarProps {
@@ -105,6 +106,10 @@ export function Sidebar({
           <Workflow size={20} className="shrink-0" />
           {!isCollapsed && <span className="font-medium">{t("sidebar_machine_control")}</span>}
         </Link>
+      </div>
+
+      <div className="border-t border-border/50 px-3 py-3">
+        <FeedbackDialog compact={isCollapsed} />
       </div>
 
       {/* Status Box */}

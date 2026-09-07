@@ -47,6 +47,24 @@ function ensurePatternsTable() {
   `);
 }
 
+function ensureFeedbackTable() {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      email TEXT NOT NULL,
+      category TEXT NOT NULL,
+      message TEXT NOT NULL,
+      page TEXT NOT NULL DEFAULT '/',
+      user_agent TEXT,
+      status TEXT NOT NULL DEFAULT 'NEW',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+  `);
+}
+
 function ensurePatternsColumns() {
   const columns = sqlite.prepare("PRAGMA table_info(patterns)").all() as Array<{ name: string }>;
   const names = new Set(columns.map((col) => col.name));
@@ -71,6 +89,7 @@ try {
   ensureUsersTable();
   ensurePatternsTable();
   ensurePatternsColumns();
+  ensureFeedbackTable();
 } catch (error) {
   console.error("Failed to ensure schema columns:", error);
 }
