@@ -10,16 +10,19 @@ const getTransporter = () => {
   const port = Number(process.env.SMTP_PORT || 587);
   if (!host || !user || !password) return null;
 
-  return nodemailer.createTransport({
+  const transportOptions = {
     host,
     port,
     secure: process.env.SMTP_SECURE === "true",
     requireTLS: port === 587,
+    family: 4,
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
     socketTimeout: 15_000,
     auth: { user, pass: password },
-  });
+  } as any;
+
+  return nodemailer.createTransport(transportOptions);
 };
 
 export async function sendFeedbackEmail(feedback: {
