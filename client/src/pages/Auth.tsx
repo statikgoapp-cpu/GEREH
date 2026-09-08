@@ -97,6 +97,8 @@ export default function AuthPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Ad Soyad</label>
                 <input
                   type="text"
+                  name="name"
+                  autoComplete="name"
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
@@ -110,6 +112,8 @@ export default function AuthPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">E-posta Adresi</label>
               <input
                 type="email"
+                  name="email"
+                  autoComplete={isLogin ? "username" : "email"}
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -122,6 +126,8 @@ export default function AuthPage() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Şifre</label>
               <input
                 type="password"
+                  name="password"
+                  autoComplete={isLogin ? "current-password" : "new-password"}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
