@@ -62,8 +62,12 @@ export function Sidebar({
               <img src="/favicon.png" alt="Logo" className="w-full h-full object-cover" />
             </div>
             <div className="whitespace-nowrap">
-              <h1 className="font-display font-bold text-lg leading-tight text-primary">GEREH</h1>
-              
+              <div className="flex items-center gap-1.5">
+                <h1 className="font-display font-bold text-lg leading-tight text-primary">GEREH</h1>
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-700">
+                  Beta
+                </span>
+              </div>
             </div>
           </Link>
         )}
