@@ -65,6 +65,34 @@ function ensureFeedbackTable() {
   `);
 }
 
+function ensureAnalyticsTable() {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      event TEXT NOT NULL,
+      page TEXT,
+      session_id TEXT,
+      metadata TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    );
+    CREATE INDEX IF NOT EXISTS analytics_events_user_id_idx ON analytics_events(user_id);
+    CREATE INDEX IF NOT EXISTS analytics_events_event_idx ON analytics_events(event);
+    CREATE INDEX IF NOT EXISTS analytics_events_created_at_idx ON analytics_events(created_at);
+    CREATE INDEX IF NOT EXISTS analytics_events_session_id_idx ON analytics_events(session_id);
+  `);
+}
+
+function ensureConfiguredAdmin() {
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  if (!adminEmail) return;
+
+  sqlite.prepare(
+    "UPDATE users SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE lower(email) = ?",
+  ).run(adminEmail);
+}
+
 function ensurePatternsColumns() {
   const columns = sqlite.prepare("PRAGMA table_info(patterns)").all() as Array<{ name: string }>;
   const names = new Set(columns.map((col) => col.name));
@@ -90,6 +118,8 @@ try {
   ensurePatternsTable();
   ensurePatternsColumns();
   ensureFeedbackTable();
+  ensureAnalyticsTable();
+  ensureConfiguredAdmin();
 } catch (error) {
   console.error("Failed to ensure schema columns:", error);
 }

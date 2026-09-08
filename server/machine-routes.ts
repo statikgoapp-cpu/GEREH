@@ -3,6 +3,7 @@ import { machineManager } from "./machine-manager";
 import { startProduction, stopProduction, isProductionRunning } from "./printer-worker";
 import type { Coord } from "./printer-worker";
 import { logger } from "./logger-bridge";
+import { trackEvent } from "./analytics";
 
 const machineRouter = Router();
 
@@ -26,6 +27,7 @@ machineRouter.post("/machine/connect", async (req, res) => {
 
   try {
     await machineManager.connect(path, baudRate ?? 9600);
+    void trackEvent({ userId: Number((req as any).user.userId), event: "MACHINE_CONNECT", page: "/machine-control" });
     res.json({ success: true, message: `${path} portuna bağlandı` });
   } catch (err) {
     logger.error({ err, path }, "Bağlantı kurulamadı");
@@ -62,6 +64,7 @@ machineRouter.post("/machine/start", async (req, res) => {
   }
 
   res.json({ success: true, message: "Üretim başlatıldı", total: coords.length });
+  void trackEvent({ userId: Number((req as any).user.userId), event: "MACHINE_START", page: "/machine-control" });
 
   startProduction(coords).catch((err) => {
     logger.error({ err }, "Üretim hatası");
@@ -72,6 +75,7 @@ machineRouter.post("/machine/stop", async (req, res) => {
   try {
     stopProduction();
     await machineManager.disconnect();
+    void trackEvent({ userId: Number((req as any).user.userId), event: "MACHINE_STOP", page: "/machine-control" });
     res.json({ success: true, message: "Acil durdurma gerçekleştirildi" });
   } catch (err) {
     logger.error({ err }, "Acil durdurma hatası");

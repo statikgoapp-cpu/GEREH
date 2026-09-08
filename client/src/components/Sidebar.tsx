@@ -10,10 +10,12 @@ import {
   SlidersHorizontal,
   Sparkles,
   Menu, // İkon eklendi
+    BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/i18n";
 import FeedbackDialog from "./FeedbackDialog";
+import { useAuth } from "@/hooks/use-auth";
 
 // Sidebar propları
 interface SidebarProps {
@@ -37,6 +39,7 @@ export function Sidebar({
 }: SidebarProps) {
   const [location] = useLocation();
   const { t } = useI18n();
+  const { user } = useAuth();
 
   // --- Hata Önleyici Hibrit Mantık ---
   const [internalCollapsed, setInternalCollapsed] = useState(false);
@@ -92,6 +95,21 @@ export function Sidebar({
             </div>
           </Link>
         ))}
+        {user?.role === "admin" && (
+          <Link href="/analytics">
+            <div
+              className={cn(
+                "flex items-center rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer group",
+                isCollapsed ? "justify-center p-3" : "gap-3 px-3 py-3",
+                location === "/analytics" ? "bg-primary text-primary-foreground shadow-md shadow-primary/20" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+              title={isCollapsed ? "Analytics" : undefined}
+            >
+              <BarChart3 className="w-5 h-5 shrink-0" />
+              {!isCollapsed && <span>Analytics</span>}
+            </div>
+          </Link>
+        )}
       </nav>
 
       {/* Machine Control */}

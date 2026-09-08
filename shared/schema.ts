@@ -44,6 +44,16 @@ export const feedback = sqliteTable("feedback", {
   updatedAt: text("updated_at").notNull().default(new Date().toISOString()),
 });
 
+export const analyticsEvents = sqliteTable("analytics_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().references(() => users.id),
+  event: text("event").notNull(),
+  page: text("page"),
+  sessionId: text("session_id"),
+  metadata: text("metadata"),
+  createdAt: text("created_at").notNull().default(new Date().toISOString()),
+});
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,

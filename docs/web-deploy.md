@@ -10,6 +10,7 @@ Use `.env.production.example` as base:
 - `NP_LICENSE_ALLOWED=1` (required for the free beta; desktop licensing is not used)
 - `JWT_SECRET` (required; use a long random value)
 - `POPPLER_PATH` (required if PDF processing is used)
+- `ADMIN_EMAIL` (optional; an existing user with this email is promoted to admin at startup)
 
 ## 2) Build
 

@@ -1,6 +1,7 @@
 ﻿import { useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "../hooks/use-auth";
+import { getAnalyticsSessionId } from "@/lib/analytics";
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -24,7 +25,7 @@ export default function AuthPage() {
     try {
       const res = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-Analytics-Session": getAnalyticsSessionId() },
         credentials: "include",
         body: JSON.stringify(payload),
       });

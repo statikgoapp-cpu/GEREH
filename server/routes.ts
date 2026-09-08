@@ -18,6 +18,8 @@ import { db } from "./db";
 import { createFeedbackSchema, feedback, users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { sendFeedbackEmail } from "./feedback-email";
+import { trackEvent } from "./analytics";
+import analyticsRouter from "./analytics-routes";
 
 
 
@@ -292,6 +294,7 @@ const runPatternWorker = async (
   await storage.updatePatternStatus(patternId, "processing");
   const patternMeta = await storage.getPattern(patternId);
   if (!patternMeta) return;
+  void trackEvent({ userId: Number(patternMeta.userId), event: "PATTERN_PROCESS_START", page: "/new" });
 
   const workerConfig = resolveWorkerConfig();
   logInfo(
@@ -309,6 +312,7 @@ const runPatternWorker = async (
     isDone = true;
     logError(`[worker] failed pattern=${patternId} reason=${reason}`);
     await storage.updatePatternStatus(patternId, "failed");
+    void trackEvent({ userId: Number(patternMeta.userId), event: "PATTERN_PROCESS_ERROR", page: "/new" });
   };
 
   worker.on("message", async (message: WorkerSuccess | WorkerFailure) => {
@@ -317,6 +321,7 @@ const runPatternWorker = async (
       if (message.ok) {
         isDone = true;
         await storage.updatePatternStatus(patternId, "completed", message.svgUrl, message.dxfUrl);
+        void trackEvent({ userId: Number(patternMeta.userId), event: "PATTERN_PROCESS_COMPLETE", page: "/new" });
         return;
       }
       await setFailed(`${message.stage}: ${message.message}`);
@@ -391,6 +396,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         logError(`Feedback email notification failed for id=${created.id}: ${String(emailError)}`);
       }
 
+      void trackEvent({ userId, event: "FEEDBACK_SUBMIT", page: parsed.data.page });
+
       return res.status(201).json({
         id: created.id,
         status: created.status,
@@ -404,6 +411,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.use("/api", authenticateToken, machineRouter);
+  app.use("/api/analytics", analyticsRouter);
 
   const serveOwnedFile = (directory: string, urlPrefix: string) =>
     async (req: any, res: any) => {
@@ -417,7 +425,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/uploads/:filename", authenticateToken, serveOwnedFile(UPLOAD_DIR, "/uploads"));
   app.get("/processed/:filename", authenticateToken, serveOwnedFile(PROCESSED_DIR, "/processed"));
 
-  app.post("/api/export/pdf", authenticateToken, express.text({ type: "*/*", limit: "20mb" }), async (req, res) => {
+  app.post("/api/export/pdf", authenticateToken, express.text({ type: "*/*", limit: "20mb" }), async (req: any, res) => {
     try {
       ensureLicensed();
       const svg = typeof req.body === "string" ?req.body.trim() : "";
@@ -425,6 +433,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: "SVG content is required" });
       }
       const buffer = await renderSvgToPdfBuffer(svg);
+      void trackEvent({ userId: Number(req.user.userId), event: "PDF_EXPORT", page: "/export/pdf", metadata: { format: "pdf" } });
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", "attachment; filename=\"export.pdf\"");
       return res.send(buffer);
@@ -477,6 +486,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
       await storage.updatePatternStatus(created.id, "completed", svgUrl, dxfUrl ??undefined, req.user.userId);
       const archived = await storage.updatePatternArchive(created.id, true, req.user.userId);
+      void trackEvent({ userId: Number(req.user.userId), event: "SVG_EXPORT", page: "/production-edit", metadata: { format: "svg" } });
+      if (dxfUrl) void trackEvent({ userId: Number(req.user.userId), event: "DXF_EXPORT", page: "/production-edit", metadata: { format: "dxf" } });
+      void trackEvent({ userId: Number(req.user.userId), event: "PDF_EXPORT", page: "/production-edit", metadata: { format: "pdf" } });
       return res.status(201).json(archived);
     } catch (error) {
       if (error instanceof Error && error.message === "LICENSE_REQUIRED") {
@@ -587,6 +599,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           : false,
     };
     logInfo(`[upload] pattern=${pattern.id} category=${category} sizeCode=${pattern.sizeCode ??"NA"}`);
+    void trackEvent({
+      userId: Number(req.user.userId),
+      event: "PATTERN_UPLOAD",
+      page: "/new",
+      metadata: { fileType: path.extname(uploadedFile.originalname ?? "").replace(".", "").toLowerCase() || "unknown" },
+    });
 
     enqueueJob(async () => {
       await runPatternWorker(pattern.id, workerInputPath, options);

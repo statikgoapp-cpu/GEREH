@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useDeletePattern, usePattern } from "@/hooks/use-patterns";
 import { useI18n } from "@/i18n";
+import { trackEvent } from "@/lib/analytics";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -193,21 +194,21 @@ export default function PatternDetails() {
                 <DropdownMenuContent align="end">
                   {dxfDownloadUrl && (
                     <DropdownMenuItem asChild>
-                      <a href={dxfDownloadUrl} download={`pattern-${pattern.id}.dxf`}>
+                      <a href={dxfDownloadUrl} download={`pattern-${pattern.id}.dxf`} onClick={() => trackEvent("DXF_EXPORT", "/pattern-details", { format: "dxf" })}>
                         DXF
                       </a>
                     </DropdownMenuItem>
                   )}
                   {svgDownloadUrl && (
                     <DropdownMenuItem asChild>
-                      <a href={svgDownloadUrl} download={`pattern-${pattern.id}.svg`}>
+                      <a href={svgDownloadUrl} download={`pattern-${pattern.id}.svg`} onClick={() => trackEvent("SVG_EXPORT", "/pattern-details", { format: "svg" })}>
                         SVG
                       </a>
                     </DropdownMenuItem>
                   )}
                   {pdfDownloadUrl && (
                     <DropdownMenuItem asChild>
-                      <a href={pdfDownloadUrl} download={`pattern-${pattern.id}.pdf`}>
+                      <a href={pdfDownloadUrl} download={`pattern-${pattern.id}.pdf`} onClick={() => trackEvent("PDF_DOWNLOAD", "/pattern-details", { format: "pdf" })}>
                         PDF
                       </a>
                     </DropdownMenuItem>

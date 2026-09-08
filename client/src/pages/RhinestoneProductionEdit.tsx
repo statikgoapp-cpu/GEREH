@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { InfoHint } from "@/components/InfoHint";
 import { useI18n } from "@/i18n";
 import { withApiBase } from "@/lib/api-base";
+import { trackEvent } from "@/lib/analytics";
 import { usePatterns } from "@/hooks/use-patterns";
 import { useMachineControl } from "../hooks/useMachineControl";
 import { useLocation } from "wouter"; // Sayfa değiştirmek için gerekli
@@ -1259,6 +1260,9 @@ const triggerDownload = (name: string, blob: Blob) => {
   document.body.appendChild(a);
   a.click();
   a.remove();
+  const extension = name.toLowerCase().split(".").pop();
+  const event = extension === "pdf" ? "PDF_DOWNLOAD" : extension === "svg" ? "SVG_EXPORT" : extension === "dxf" ? "DXF_EXPORT" : null;
+  if (event) trackEvent(event, "/production-edit", { format: extension });
   window.setTimeout(() => URL.revokeObjectURL(url), 2000);
 };
 

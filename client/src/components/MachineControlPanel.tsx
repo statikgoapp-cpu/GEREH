@@ -4,6 +4,7 @@ import { Link } from "wouter";
 
 import { useI18n } from "@/i18n";
 import { useMachineControl } from "../hooks/useMachineControl";
+import { trackEvent } from "@/lib/analytics";
 
 interface Port {
   path: string;
@@ -56,6 +57,7 @@ export function MachineControlPanel(): React.ReactElement {
 
   useEffect(() => {
     void fetchPorts();
+    trackEvent("MACHINE_PAGE_VIEW", "/machine-control");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

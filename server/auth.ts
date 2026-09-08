@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { loginUserSchema, registerUserSchema, users } from "../shared/schema";
+import { trackEvent } from "./analytics";
 
 export const authRouter = Router();
 
@@ -12,6 +13,8 @@ if (!JWT_SECRET && process.env.NODE_ENV === "production") {
   throw new Error("JWT_SECRET must be set in production");
 }
 const JWT_SECRET_VALUE = JWT_SECRET ?? "development-only-secret";
+const configuredAdminEmail = () => process.env.ADMIN_EMAIL?.trim().toLowerCase();
+const isConfiguredAdmin = (email: string) => configuredAdminEmail() === email.trim().toLowerCase();
 
 const setAuthCookie = (res: any, token: string) => {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
@@ -64,7 +67,7 @@ authRouter.post("/register", async (req, res) => {
       email,
       passwordHash,
       name,
-      role: "user",
+      role: isConfiguredAdmin(email) ? "admin" : "user",
     }).returning();
 
     const user = newUserResult[0];
@@ -75,6 +78,7 @@ authRouter.post("/register", async (req, res) => {
 
     // Şifre hash'ini frontend'e göndermemek için ayırıyoruz
     const { passwordHash: _, ...safeUser } = user;
+    void trackEvent({ userId: user.id, event: "REGISTER", sessionId: typeof req.headers["x-analytics-session"] === "string" ? req.headers["x-analytics-session"] : null });
 
     res.status(201).json({ user: safeUser, token });
   } catch (error) {
@@ -115,10 +119,18 @@ authRouter.post("/login", async (req, res) => {
     }
 
     // JWT Token oluştur
-    const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET_VALUE, { expiresIn: "7d" });
+    const effectiveUser = isConfiguredAdmin(user.email) && user.role !== "admin"
+      ? { ...user, role: "admin" }
+      : user;
+    if (effectiveUser.role !== user.role) {
+      await db.update(users).set({ role: "admin", updatedAt: new Date().toISOString() }).where(eq(users.id, user.id));
+    }
+
+    const token = jwt.sign({ userId: effectiveUser.id, role: effectiveUser.role }, JWT_SECRET_VALUE, { expiresIn: "7d" });
     setAuthCookie(res, token);
 
-    const { passwordHash: _, ...safeUser } = user;
+    const { passwordHash: _, ...safeUser } = effectiveUser;
+    void trackEvent({ userId: effectiveUser.id, event: "LOGIN", sessionId: typeof req.headers["x-analytics-session"] === "string" ? req.headers["x-analytics-session"] : null });
     res.json({ user: safeUser, token });
   } catch (error) {
     console.error("Login Error:", error);
@@ -126,7 +138,8 @@ authRouter.post("/login", async (req, res) => {
   }
 });
 
-authRouter.post("/logout", (_req, res) => {
+authRouter.post("/logout", authenticateToken, (req: any, res) => {
+  void trackEvent({ userId: Number(req.user.userId), event: "LOGOUT" });
   clearAuthCookie(res);
   res.status(204).send();
 });
@@ -135,7 +148,7 @@ authRouter.post("/logout", (_req, res) => {
 // 3. TOKEN DOĞRULAMA MIDDLEWARE'İ
 // ==========================================
 // Bu fonksiyonu şifreli rotalarda (örn: pattern ekleme) kullanacağız
-export const authenticateToken = (req: any, res: any, next: any) => {
+export function authenticateToken(req: any, res: any, next: any) {
   const authHeader = req.headers["authorization"];
   const token = authHeader?.startsWith("Bearer ")
     ? authHeader.slice("Bearer ".length)
@@ -150,7 +163,7 @@ export const authenticateToken = (req: any, res: any, next: any) => {
     req.user = decoded; // req.user içine { userId, role } bilgilerini ekledik
     next();
   });
-};
+}
 
 // ==========================================
 // 4. MEVCUT KULLANICI BİLGİSİNİ GETİR (ME)
@@ -161,6 +174,11 @@ authRouter.get("/me", authenticateToken, async (req: any, res: any) => {
     const user = userResult[0];
 
     if (!user) return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+
+    if (isConfiguredAdmin(user.email) && user.role !== "admin") {
+      await db.update(users).set({ role: "admin", updatedAt: new Date().toISOString() }).where(eq(users.id, user.id));
+      user.role = "admin";
+    }
 
     const { passwordHash: _, ...safeUser } = user;
     res.json(safeUser);
