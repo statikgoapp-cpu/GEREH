@@ -2,28 +2,30 @@ import { FaInstagram, FaWhatsapp, FaYoutube } from "react-icons/fa";
 import { ExternalLink, Mail, MessageCircle } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { WHATSAPP_URL } from "@/components/WhatsAppButton";
-
-const contactLinks = [
-  { label: "WhatsApp", value: "+90 536 307 25 61", href: WHATSAPP_URL, icon: FaWhatsapp, iconClassName: "text-[#25D366]", source: "contact_page" },
-  { label: "E-posta", value: "statikgoapp@gmail.com", href: "mailto:statikgoapp@gmail.com", icon: Mail, iconClassName: "text-primary" },
-  { label: "Instagram", value: "@gereh_app", href: "https://www.instagram.com/gereh_app/", icon: FaInstagram, iconClassName: "text-[#E4405F]" },
-  { label: "YouTube", value: "@gerehapp", href: "https://www.youtube.com/@gerehapp", icon: FaYoutube, iconClassName: "text-[#FF0000]" },
-];
+import { useI18n } from "@/i18n";
 
 export default function Contact() {
+  const { t } = useI18n();
+  const contactLinks = [
+    { label: t("contact_whatsapp"), value: "+90 536 307 25 61", href: WHATSAPP_URL, icon: FaWhatsapp, iconClassName: "text-[#25D366]", source: "contact_page" },
+    { label: t("contact_email"), value: "statikgoapp@gmail.com", href: "mailto:statikgoapp@gmail.com", icon: Mail, iconClassName: "text-primary" },
+    { label: t("contact_instagram"), value: "@gereh_app", href: "https://www.instagram.com/gereh_app/", icon: FaInstagram, iconClassName: "text-[#E4405F]" },
+    { label: t("contact_youtube"), value: "@gerehapp", href: "https://www.youtube.com/@gerehapp", icon: FaYoutube, iconClassName: "text-[#FF0000]" },
+  ];
+
   return (
     <main className="bg-grid-pattern min-h-screen">
       <header className="mb-8 border-b border-border pb-6">
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-accent">GEREH</p>
-        <h1 className="text-3xl font-display font-bold text-foreground">İletişim ve Destek</h1>
-        <p className="mt-2 max-w-2xl text-muted-foreground">Tekstil desen dijitalleştirme ve üretim platformu hakkında bize ulaşın.</p>
+        <h1 className="text-3xl font-display font-bold text-foreground">{t("contact_title")}</h1>
+        <p className="mt-2 max-w-2xl text-muted-foreground">{t("contact_desc")}</p>
       </header>
 
       <div className="grid max-w-5xl grid-cols-1 gap-6 lg:grid-cols-[0.8fr_1.2fr]">
         <section className="rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm">
           <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-xl bg-[#25D366]/10 text-[#25D366]"><MessageCircle className="h-6 w-6" /></div>
-          <h2 className="text-xl font-semibold">GEREH desteği</h2>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground">Uygulama, desen işleme veya üretim akışınızla ilgili sorularınız için ekibimize ulaşabilirsiniz.</p>
+          <h2 className="text-xl font-semibold">{t("contact_support_title")}</h2>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">{t("contact_support_desc")}</p>
           <a
             href={WHATSAPP_URL}
             target="_blank"
@@ -32,7 +34,7 @@ export default function Contact() {
             className="mt-6 inline-flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#20bd5a] focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[#25D366]/30"
           >
             <FaWhatsapp className="h-5 w-5" aria-hidden="true" />
-            WhatsApp'tan yazın
+            {t("contact_whatsapp_cta")}
           </a>
         </section>
 
