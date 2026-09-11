@@ -13,12 +13,14 @@ import RhinestoneTransfer from "@/pages/RhinestoneTransfer";
 import RhinestoneFill from "@/pages/RhinestoneFill";
 import Archive from "@/pages/Archive";
 import Settings from "@/pages/Settings";
+import Contact from "./pages/Contact";
 import RhinestoneProductionEdit from "@/pages/RhinestoneProductionEdit";
 import Layout from "@/components/Layout";
 import AuthPage from "./pages/Auth";
 import { MachineControlPanel } from "@/components/MachineControlPanel";
 import { AuthProvider, useAuth } from "./hooks/use-auth";
 import { trackEvent } from "./lib/analytics";
+import { WhatsAppButton } from "./components/WhatsAppButton";
 
 function AnalyticsTracker() {
   const { user } = useAuth();
@@ -111,6 +113,10 @@ function Router() {
         path="/settings"
         component={() => <ProtectedRoute component={Settings} />}
       />
+      <Route
+        path="/contact"
+        component={() => <ProtectedRoute component={Contact} />}
+      />
       <Route path="/analytics" component={AdminAnalyticsRoute} />
       <Route
         path="/production-edit"
@@ -139,6 +145,7 @@ function AppContent() {
       ) : (
         <Router />
       )}
+      <WhatsAppButton />
     </>
   );
 }

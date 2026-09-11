@@ -3,13 +3,14 @@ import { analyticsEvents } from "@shared/schema";
 
 export const ANALYTICS_EVENTS = [
   "REGISTER", "LOGIN", "LOGOUT", "APP_OPEN", "PAGE_VIEW",
+  "WHATSAPP_CLICK",
   "PATTERN_UPLOAD", "PATTERN_PROCESS_START", "PATTERN_PROCESS_COMPLETE", "PATTERN_PROCESS_ERROR",
   "SVG_EXPORT", "DXF_EXPORT", "PDF_EXPORT", "PDF_DOWNLOAD", "FEEDBACK_SUBMIT",
   "MACHINE_PAGE_VIEW", "MACHINE_CONNECT", "MACHINE_START", "MACHINE_STOP",
 ] as const;
 
 const eventSet = new Set<string>(ANALYTICS_EVENTS);
-const metadataKeys = new Set(["format", "fileType", "page"]);
+const metadataKeys = new Set(["format", "fileType", "page", "source"]);
 
 export async function trackEvent(input: {
   userId: number;

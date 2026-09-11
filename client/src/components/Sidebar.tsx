@@ -4,6 +4,7 @@ import {
   LayoutDashboard, 
   PlusCircle, 
   Settings, 
+  MessageCircle,
   Workflow,
   PackageOpen,
   Gem,
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { key: "production_edit", icon: SlidersHorizontal, href: "/production-edit" },
   { key: "archive", icon: PackageOpen, href: "/archive" },
   { key: "settings", icon: Settings, href: "/settings" },
+  { key: "contact", icon: MessageCircle, href: "/contact" },
 ];
 
 export function Sidebar({ 

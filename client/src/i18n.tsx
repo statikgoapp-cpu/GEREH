@@ -72,6 +72,7 @@ const en: Dictionary = {
   prod_color_size_rules: "Production Color-Size Rules",
   archive: "Archive",
   settings: "Settings",
+  contact: "Contact & Support",
   undo: "Undo",
   distribution_report: "Distribution Report",
   rhinestone_transfer: "Rhinestone Transfer",
