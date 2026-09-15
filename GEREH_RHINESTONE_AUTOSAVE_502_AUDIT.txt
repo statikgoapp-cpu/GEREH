@@ -1,0 +1,573 @@
+==================================================
+RHINESTONE AUTO SAVE 502 AUDIT
+==================================================
+
+Tarih: 15.09.2026
+Kapsam: RhinestoneFill sonucu sonrasi POST /api/production-saves
+Kisit: Bu audit sirasinda kaynak dosyalari degistirilmemistir.
+Secret, token ve password degerleri rapora yazilmamistir.
+
+==================================================
+1. AUTO SAVE ENDPOINT
+==================================================
+
+RhinestoneFill otomatik kayit icin su endpoint'i cagirir:
+
+  POST /api/production-saves
+
+Endpoint frontend tarafinda su dosyada kullanilmaktadir:
+
+  client/src/pages/RhinestoneFill.tsx
+
+Cagri:
+
+  fetch(withApiBase("/api/production-saves"), {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  })
+
+Endpoint server/routes.ts icinde tanimlidir:
+
+  app.post("/api/production-saves", authenticateToken, upload.none(), async ...)
+
+==================================================
+2. FRONTEND REQUEST
+==================================================
+
+RhinestoneFill islemi iki ayri asamadan olusur:
+
+1. Gorsel tarayicida islenir ve StonePattern olusturulur.
+2. StonePattern'den SVG, DXF ve PLT uretilir; sonra otomatik save
+   endpoint'ine gonderilir.
+
+Frontend'de auto save cagrisi ancak generateRhinestonePattern() tamamlandiktan
+sonra yapilir:
+
+  const result = await generateRhinestonePattern(imageData, options);
+  setPattern(result);
+  await saveGeneratedPattern(result);
+
+Bu nedenle kullanicinin "Rhinestone Fill tamamlandi" olarak gordugu kisim,
+istemci tarafindaki tas uretiminin basarili oldugunu gosterir. Auto save,
+bundan sonra baslayan ayri bir network/backend islemidir.
+
+Frontend:
+
+- Request timeout tanimlamiyor.
+- AbortController kullanmiyor.
+- Request body boyutunu olcmuyor.
+- Response body'yi okumuyor.
+- Yalnizca res.ok false ise status kodunu hata mesajina koyuyor.
+
+Gosterilen hata:
+
+  Auto save failed (502)
+
+Bu mesaj, frontend'in kendi urettigi bir status degil; fetch response'undan
+gelen HTTP status'un 502 oldugunu gosterir.
+
+==================================================
+3. REQUEST BODY
+==================================================
+
+Request multipart/form-data olarak FormData ile gonderilir.
+Browser Content-Type boundary'sini kendisi ekler; frontend manuel
+Content-Type header ayarlamaz.
+
+Gonderilen alanlar tam olarak:
+
+  mode: "rhinestone"
+  name: sourceFile adindan uzantisi silinmis temel ad
+  svg: generateSVG(generatedPattern, options.stoneStyle)
+  dxf: generateDXF(generatedPattern)
+  plt: generatePLT(generatedPattern)
+
+Kullanici token'i veya kaynak gorsel body icine ayrica eklenmez.
+Auth credentials: "include" ile cookie/oturum bilgisi tarayici tarafindan
+ayri olarak gonderilir.
+
+Payload boyutu sabit degildir; tas sayisina ve PLT yol uzunluguna baglidir.
+
+Gercek motorla 600x600 tek renk sentetik ornek olcumu:
+
+SS2:
+- Tas sayisi: 11.500
+- SVG: yaklasik 1.261.010 byte
+- DXF: yaklasik 686.280 byte
+- PLT: yaklasik 5.987.116 byte
+- Uc alanin toplam icerigi: yaklasik 7.934.406 byte
+
+SS4:
+- Tas sayisi: 5.121
+- SVG: yaklasik 561.635 byte
+- DXF: yaklasik 305.626 byte
+- PLT: yaklasik 2.666.389 byte
+- Uc alanin toplam icerigi: yaklasik 3.533.650 byte
+
+Bunlar multipart boundary ve header overhead'i haric degerlerdir. Gercek
+payload biraz daha buyuk olur.
+
+==================================================
+4. BACKEND ROUTE
+==================================================
+
+Route sirasi:
+
+1. authenticateToken
+2. upload.none() / Multer multipart parser
+3. ensureLicensed()
+4. mode, name, svg, dxf, plt alanlarini oku
+5. SVG icinde <svg kontrolu
+6. unique/base filename olustur
+7. SVG'yi public/processed altina yaz
+8. DXF varsa public/processed altina yaz
+9. PLT varsa public/processed altina yaz
+10. SVG'den PDF buffer olustur
+11. PDF'yi public/processed altina yaz
+12. storage.createPattern()
+13. storage.updatePatternStatus()
+14. storage.updatePatternArchive()
+15. 201 JSON response don
+
+Route kodunda 502 status'u yoktur.
+
+Route'un acikca dondugu status'lar:
+
+- authenticateToken: 401 veya 403
+- ensureLicensed: 403
+- SVG eksik/gecersiz: 400
+- beklenmeyen route hatasi: 500
+- basarili save: 201
+
+Multer veya Express global error handler da bu route icinde 502 donen bir
+kod olarak bulunmamaktadir.
+
+==================================================
+5. AUTHENTICATION
+==================================================
+
+production-saves su middleware'den gecer:
+
+  authenticateToken
+
+Middleware sirasi route callback'inden once gelir. Token:
+
+- Authorization Bearer header'dan veya
+- gereh_token cookie'sinden
+
+alinir.
+
+Eksik token:
+
+  401 Unauthorized
+
+Gecersiz veya suresi dolmus token:
+
+  403 Forbidden
+
+Dolayisiyla authentication kaynakli hata bu belirtilerle 502 olarak
+aciklanamaz. Auth basarili olduktan sonra route'a girilmis olmasi gerekir.
+
+Frontend credentials: "include" kullandigi icin ayni-origin Render
+uygulamasinda cookie gonderimi beklenen davranistir.
+
+==================================================
+6. FILE WRITE
+==================================================
+
+Server sabitleri:
+
+  UPLOAD_DIR = "uploads"
+  PROCESSED_DIR = "public/processed"
+
+production-saves kaynak gorseli yazmaz. Su uretilen dosyalari yazar:
+
+  public/processed/<unique>-rhinestone-session.svg
+  public/processed/<unique>-rhinestone-session.dxf
+  public/processed/<unique>-rhinestone-session.plt
+  public/processed/<unique>-rhinestone-session.pdf
+
+Klasor startup sirasinda yoksa routes.ts icinde mkdirSync ile olusturulur.
+
+Dosya yazma hatasi olursa route catch bloguna duser ve 500 doner.
+
+Render filesystem ephemeral'dir. Bu, dosyalarin restart/redeploy sonrasi
+kalici olmayabilecegi anlamina gelir; ancak tek bir aktif request'in dosya
+yazmasini normalde 502'ye cevirmez. Dosya yazma veya permission problemi
+Express tarafinda 500 olarak gorunmelidir.
+
+PLT dosyasi fiziksel olarak yazilir; ancak pattern metadata'sinda PLT URL
+kolonu bulunmaz. Bu, PLT'nin kaydedilmesi ile Dashboard metadata kaydinin
+birbirinden kismen ayrilmasidir. Bu durum POST 502'nin dogrudan nedeni
+degildir; save route PLT yazimindan sonra devam eder.
+
+==================================================
+7. PDF GENERATION
+==================================================
+
+production-saves icinde PDF olusturma su fonksiyonla senkron olarak yapilir:
+
+  renderSvgToPdfBuffer(svg)
+
+Bu fonksiyon:
+
+- pdfkit yukler.
+- svg-to-pdfkit yukler.
+- SVG viewBox veya width/height bilgisini okur.
+- PDFDocument olusturur.
+- Tum SVG dairelerini PDF'e cevirir.
+- PDF stream'ini memory buffer'da toplar.
+- doc.end() sonrasinda Promise resolve eder.
+
+Ardindan buffer tekrar diske yazilir:
+
+  await fsp.writeFile(pdfFs, pdfBuffer)
+
+Bu PDF islemi route icinde asenkron Promise ile beklenir; fakat production
+save ayri bir background job'a alinmamistir. Response ancak PDF tamamlanip
+veritabani islemleri bittikten sonra doner.
+
+Cok fazla circle iceren SVG'lerde PDF conversion:
+
+- CPU kullanir.
+- memory kullanir.
+- response'u geciktirebilir.
+- Render proxy timeout veya upstream disconnect riskini artirabilir.
+
+PDF generation dogrudan throw ederse route catch blogu 500 doner. PDF islemi
+sirasinda process kilitlenir, kapanir veya Render proxy upstream baglantisini
+zaman asimina ugratarak kapatirsa browser tarafinda 502 gorulebilir.
+
+==================================================
+8. DATABASE SAVE
+==================================================
+
+PDF yazimi tamamlandiktan sonra database islemleri baslar.
+
+storage.createPattern() su alanlarla patterns tablosuna insert yapar:
+
+- userId: req.user.userId
+- name
+- imageUrl: /processed/<base>.svg
+- category: rhinestone
+- sizeCode: null
+- realDiameterMm: null
+- vectorDiameterMm: null
+- holeDiameterMm: null
+
+Ardindan:
+
+  updatePatternStatus(created.id, "completed", svgUrl, dxfUrl, userId)
+
+ile:
+
+- status completed
+- svgUrl
+- dxfUrl
+
+alanlari guncellenir.
+
+Son olarak:
+
+  updatePatternArchive(created.id, true, userId)
+
+ile archived true yapilir.
+
+storage sorgularinda userId kosulu kullanilir. User isolation bozulmamistir.
+
+Database hatasi route catch blogunda 500'e doner. SQLite'nin yoklugu,
+users tablosu problemi veya patterns schema problemi normal Express
+akisi icinde 502 degil 500 uretmelidir.
+
+==================================================
+9. RENDER ENVIRONMENT
+==================================================
+
+Mevcut runtime:
+
+- Aktif database implementation SQLite / better-sqlite3'dir.
+- DB dosyasi process.cwd()/neural.db konumundadir.
+- Uretilen dosyalar local public/processed klasorundedir.
+- Render filesystem ephemeral kabul edilmelidir.
+- Render PORT'u server/index.ts tarafindan okunur.
+- Sunucu 0.0.0.0 adresine bind edilir.
+
+Request body:
+
+- production-saves upload.none() ile multipart parse edilir.
+- Multer fieldSize limiti 50 MB'dir.
+- fields limiti 32'dir.
+- fileSize limiti upload alanlari icindir; bu request'te dosya alani yoktur.
+- SVG, DXF ve PLT ayri text field olarak gonderilir.
+
+Olculen yaklasik 7.93 MB SS2 payload, 50 MB tek alan limitinin altindadir.
+Bu nedenle normal 600x600 SS2 ornegi icin request body limitinin asilmasi
+koddan desteklenmiyor. Cok daha buyuk tas sayilarinda fieldSize asilirsa
+Multer/Express hata status'u 502 olarak degil, hata handler yapisina gore
+4xx/5xx olarak incelenmelidir.
+
+Node 24 / better-sqlite3 native uyumsuzlugu sunucunun baslamasini veya
+SQLite yuklenmesini engelleyebilir. Fakat Render'da uygulama basliyor,
+authentication ve RhinestoneFill islemi ilerliyor ise bu, tek basina
+request sonunda gorulen 502'nin birincil aciklamasi degildir. Native addon
+startup sorunu olsaydi genellikle tum endpoint'ler etkilenir ve save
+route'una kadar ulasilamazdi.
+
+==================================================
+10. 502'NIN KESIN KAYNAGI
+==================================================
+
+Koddan kesin olarak kanitlananlar:
+
+1. server/routes.ts icinde /api/production-saves icin 502 donen kod yoktur.
+2. Route icindeki bilinen auth, lisans, validation ve DB/file/PDF hatalari
+   401, 403, 400 veya 500 olarak ele alinir.
+3. Frontend 502'yi kendisi uretmiyor; sadece response status'unu gosteriyor.
+4. production-saves response'u PDF ve DB islemleri bittikten sonra donuyor.
+5. PDF generation ve file write response'dan once senkron akisin parcasi.
+6. Express request timeout veya Render proxy timeout icin uygulama icinde
+   ozel bir ayar bulunmuyor.
+
+Bu nedenle status'un siniflandirmasi:
+
+A) Browser -> Render 502: MUMKUN
+B) Express route -> 502: KODDA YOK
+C) Route icinde baska servis/worker -> 502: YOK; production-saves worker
+   cagirmiyor
+D) Render proxy timeout/upstream disconnect: EN GUCLU ADAY
+E) Request body/payload problemi: OLASILIK VAR, fakat olculen 7.93 MB
+   ornek 50 MB field limitinin altinda
+F) PDF/file generation problemi: MUMKUN; throw olursa normalde 500, process
+   veya upstream baglantisi etkilenirse proxy 502 gorunebilir
+G) SQLite DB problemi: MUMKUN; normal route catch davranisinda 500 beklenir
+H) Dosya yazma problemi: MUMKUN; normal route catch davranisinda 500 beklenir
+
+Onemli sinir:
+
+Render request logu, deploy logu ve Browser Network response headers/body
+olmadan 502'nin tam olarak "timeout" mu yoksa Render instance/proxy upstream
+failure'i mi oldugu kaynak koddan tek basina kesinlestirilemez.
+
+Ancak Express'in 502 uretmedigi kesin oldugu icin uygulama seviyesindeki
+kesin ayrim sudur:
+
+  502 Express production-saves route status'u degil, Render upstream/proxy
+  katmanindan gelen veya upstream baglantisinin kaybolmasiyla olusan bir
+  status'tur.
+
+Production-saves'in PDF conversion + PDF write + SQLite insert + update
+zinciri response vermeden once calistigi icin, en guclu teknik aciklama
+uzun/agir SVG'lerde Render proxy timeout veya uygulama upstream'inin
+request tamamlanmadan kapanmasidir.
+
+==================================================
+11. KESIN HATA
+==================================================
+
+Koddaki kesin hata/riski:
+
+production-saves request'i, cok buyuk rhinestone SVG'sinden PDF uretimini
+senkron olarak tamamlamadan response donmemektedir.
+
+Ayrica frontend payload boyutunu, request suresini ve response body'yi
+kaydetmedigi icin sorunun Render'daki belirli asamasi frontend tarafinda
+ayristirilamiyor.
+
+Bu nedenle mevcut hata mesaji:
+
+  Auto save failed (502)
+
+asagidaki daha detayli hatalardan hangisinin oldugunu tek basina soylemez:
+
+- PDF conversion uzun surdu
+- PDF conversion process'i kaynak tuketti
+- Render proxy timeout oldu
+- Render instance yeniden basladi
+- SQLite/file write sonrasinda upstream baglantisi koptu
+
+Kod okumasina gore en guclu kok neden:
+
+  Buyuk multipart payload + SVG'nin PDF'e senkron cevrilmesi + Render
+  proxy'nin response bekleme suresi/instance kaynak sinirlari.
+
+Bu sonuc Render loglari olmadan "proxy timeout kesin su saniyede oldu"
+seviyesinde iddia edilmemelidir.
+
+==================================================
+12. EN KUCUK COZUM
+==================================================
+
+Amaç algoritmaya dokunmadan autosave'i guvenilir hale getirmektir.
+
+En kucuk ve guvenli cozum sirasi:
+
+1. PDF uretimini production-saves HTTP response yolundan cikarmak.
+   SVG/DXF/PLT yazilip pattern metadata kaydi tamamlandiktan sonra PDF
+   uretilmesi veya PDF'in ayri kontrollu bir arka plan islemine alinmasi.
+
+2. Response'un PDF tamamlanmasini beklemeden donmesi dusunuluyorsa PDF
+   durumu ayri ele alinmali; Dashboard PDF linki hazir olmadan kullaniciya
+   sunulmamalidir.
+
+3. Daha az kapsamli secenek olarak PDF conversion oncesi ve sonrasina
+   sure, SVG/DXF/PLT byte size ve memory/exception loglari eklemek.
+   Bu, asil Render problemini kesin ayirmak icin gereklidir ancak tek
+   basina timeout problemini cozmez.
+
+4. Frontend'de response body ve elapsed time okunarak hata ayrintisinin
+   kaybedilmemesi.
+
+5. SVG/DXF/PLT alanlarinin Multer field limitleri icinde kalmasi ve buyuk
+   PLT text'lerinin kontrollu sinirlanmasi.
+
+En az riskli ilk adim, source algoritmasina dokunmadan production-saves
+route'unda PDF islemini izole etmek ve Render loglamasi eklemektir.
+
+SQLite veya PostgreSQL degisikligi bu hatanin ilk cozum adimi degildir.
+
+==================================================
+13. DEGISMESI GEREKEN DOSYALAR
+==================================================
+
+Muhtemel minimum uygulama duzeltmesi icin:
+
+- server/routes.ts
+  production-saves response/PDF akisinin ayrilmasi ve ayrintili timing
+  loglari icin.
+
+Opsiyonel gozlemleme icin:
+
+- client/src/pages/RhinestoneFill.tsx
+  payload boyutu, gecen sure ve response body loglamak icin.
+
+Bu audit sirasinda bu dosyalar degistirilmemistir.
+
+==================================================
+14. DEGISMESI GEREKMEYEN DOSYALAR
+==================================================
+
+Autosave 502 sorununun ilk asamasi icin su dosyalara dokunulmasi
+gerekmemektedir:
+
+- client/src/components/rhinestone-fill-engine.ts
+- client/src/components/ControlPanel.tsx
+- client/src/components/PatternCanvas.tsx
+- server/image-worker.ts
+- shared/routes.ts
+- shared/schema.ts
+- server/storage.ts
+- authentication kodu
+- Dashboard pattern processing kodu
+
+Rhinestone Fill tas algoritmasi, renk clustering, grid, density, spacing
+ve multi-size akisinin bu sorunla ilgisi yoktur.
+
+Onceki users table initialization konusu startup/DB semasi ile ilgilidir.
+Auth ve pattern listesi calisiyorsa production-saves'in sonundaki 502'yi
+tek basina aciklamaz; DB insert patlarsa mevcut catch bloguna gore 500
+beklenir.
+
+Onceki PDF ownership fix'i ise uretilmis PDF'nin daha sonra GET ile
+indirilmesi sirasindaki sahiplik kontroluyle ilgilidir. production-saves
+POST isleminin PDF buffer uretmesini veya DB insertini etkilemez. Mevcut
+storage.ts PDF URL'sini SVG/DXF metadata'siyle eslestirecek sekilde
+onarilmissa bu, sonraki PDF download sorunudur; mevcut POST 502'nin kok
+nedeni degildir.
+
+==================================================
+15. TEST PLANI
+==================================================
+
+Render ve browser tarafinda su veriler birlikte toplanmalidir:
+
+1. Browser Network:
+   - POST status
+   - request payload size
+   - response size
+   - response body
+   - request start/end time
+   - response headers
+
+2. Render request log:
+   - POST /api/production-saves gorunuyor mu?
+   - Express finish logu olusuyor mu?
+   - Route kac ms suruyor?
+   - 201/400/500 goruluyor mu?
+
+3. Route icine gecici log noktalar:
+   - svg.length
+   - dxf.length
+   - plt.length
+   - dosya yazma baslangic/bitis zamani
+   - PDF baslangic/bitis zamani
+   - PDF buffer byte size
+   - createPattern baslangic/bitis zamani
+   - update status/archive baslangic/bitis zamani
+
+4. Sonuc yorumu:
+
+   - Browser 502 + Express'te hic finish logu yok:
+     Render proxy timeout, upstream crash veya instance disconnect.
+
+   - Express 500 logu varsa:
+     Response body ve stack trace asil nedeni verir; PDF/file/SQLite ayrilir.
+
+   - Express 201 logu var ama browser 502 goruyor:
+     Proxy response iletimi, connection reset veya hosting katmani sorunu.
+
+   - Route PDF baslangicinda kalip finish vermiyorsa:
+     PDF conversion/CPU/memory sorunu.
+
+   - SVG/DXF/PLT write tamamlanip PDF baslamiyorsa:
+     PDF module veya conversion baslangici incelenmeli.
+
+   - PDF tamamlanip DB insertte kaliniyorsa:
+     SQLite lock/schema/disk sorunu incelenmeli.
+
+5. Kontrollu payload testleri:
+
+   - Kucuk SVG, az tas: baseline
+   - 600x600 SS4: orta payload
+   - 600x600 SS2: buyuk payload
+   - Gercek logo, multi-size acik
+   - Gercek logo, multi-size kapali
+
+6. Her testte kaydedilecek alanlar:
+
+   - stone count
+   - SVG/DXF/PLT byte size
+   - PDF conversion suresi
+   - toplam request suresi
+   - response status
+   - response body
+   - pattern DB kaydi olustu mu
+   - SVG/DXF/PLT/PDF dosyalari olustu mu
+
+==================================================
+FINAL AUDIT SONUCU
+==================================================
+
+- Kaynak dosyalar degistirildi mi?: HAYIR
+- Commit/push yapildi mi?: HAYIR
+- Endpoint: POST /api/production-saves
+- Request tipi: multipart/form-data
+- Body alanlari: mode, name, svg, dxf, plt
+- Ornek 600x600 SS2 payload: yaklasik 7.93 MB + multipart overhead
+- Multer fieldSize: 50 MB
+- Express route 502 donuyor mu?: HAYIR, kodda 502 yok
+- Auth hatasi 502 mi?: HAYIR, 401/403
+- Lisans hatasi 502 mi?: HAYIR, 403
+- Validation hatasi 502 mi?: HAYIR, 400
+- PDF/file/SQLite exception route sonucu: normalde 500
+- Production-saves worker cagiriyor mu?: HAYIR
+- PDF production-saves icinde mi?: EVET, senkron response oncesi
+- PLT yaziliyor mu?: EVET
+- PLT metadata URL alani var mi?: HAYIR
+- En guclu neden: Render proxy/upstream timeout veya request tamamlanmadan
+  upstream baglantisinin kopmasi; tetikleyici buyuk payload ve senkron PDF
+  generation zinciri
+- Tam proxy timeout kaniti mevcut mu?: Hayir; Render request/deploy logu
+  ve browser Network ayrintisi gereklidir
+- En kucuk guvenli cozum: PDF islemini HTTP response yolundan ayirmak ve
+  timing/payload/PDF/DB loglari eklemek

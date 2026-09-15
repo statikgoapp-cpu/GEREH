@@ -9,7 +9,7 @@
     "dev": "cross-env NODE_ENV=development tsx server/index.ts --host --port=8100",
     "build": "tsx script/build.ts",
     "build:client": "vite build",
-    "start": "NODE_ENV=production node dist/index.cjs",
+    "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "start:prod": "cross-env NODE_ENV=production HOST=0.0.0.0 PORT=8100 node dist/index.cjs",
     "check": "tsc",
     "smoke:web": "node script/web-smoke.cjs",

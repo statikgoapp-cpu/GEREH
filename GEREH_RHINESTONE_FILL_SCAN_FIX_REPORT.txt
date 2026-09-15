@@ -1,0 +1,272 @@
+==================================================
+GEREH RHINESTONE FILL SCAN FIX REPORT
+==================================================
+
+Tarih: 14.09.2026
+Kapsam: Yalnizca client/src/components/rhinestone-fill-engine.ts
+
+==================================================
+1. ESKI LIMIT DAVRANISI
+==================================================
+
+Eski fillGaps() uygulamasinda:
+
+  const maxCandidates = 24000;
+
+limiti, ayni fillGaps() cagrisi icindeki phase 0, phase 1, phase 2 ve
+phase 3 icin ortak global aday limitiydi.
+
+Adaylar phase sirasiyla tek candidates listesine ekleniyordu. Toplam liste
+24.000'e ulastiginda su akista tum ust donguler kiriliyordu:
+
+- col dongusu kiriliyordu.
+- row dongusu kiriliyordu.
+- phase dongusu kiriliyordu.
+
+Sonuc olarak sonraki phase'lerin adaylari hic uretilmeden tarama sona
+eriyordu.
+
+600x600 SS2 tam alanda ham phase adaylari yaklasik olarak:
+
+- Phase 0: 11.600
+- Phase 1: 11.500
+- Phase 2: 11.500
+- Phase 3: 11.500
+- Toplam: 46.100
+
+Eski global limit nedeniyle phase 2 kismen, phase 3 ise tamamen
+atlanabiliyordu.
+
+==================================================
+2. YENI LIMIT DAVRANISI
+==================================================
+
+Toplam aday butcesi korunmustur:
+
+  maxCandidates = 24000
+
+Ancak yeni olarak phase sayisina gore bagimsiz butce hesaplanir:
+
+  phaseCandidateBudget = ceil(maxCandidates / phases.length)
+
+Dort phase icin:
+
+  phaseCandidateBudget = ceil(24000 / 4) = 6000
+
+Her phase kendi sayacini kullanir:
+
+  let phaseCandidateCount = 0;
+
+Bir phase kendi 6.000 aday butcesine ulasinca yalnizca o phase'in col ve
+row donguleri kirilir. Phase ana dongusu devam eder ve sonraki phase'e
+gecilir.
+
+Yeni davranista artik:
+
+- Toplam aday sayisi kontrolsuz buyumez.
+- Bir phase diger phase'lerin butcesini tuketemez.
+- Phase 0, 1, 2 ve 3'ün hepsi aday uretme sansina sahiptir.
+- Adaylar tum phase'lerden toplandiktan sonra mevcut score siralamasi
+  korunur.
+
+==================================================
+3. PHASE BAZLI ADAY SAYILARI
+==================================================
+
+Yeni butce:
+
+- Phase 0: en fazla 6.000
+- Phase 1: en fazla 6.000
+- Phase 2: en fazla 6.000
+- Phase 3: en fazla 6.000
+- Toplam: en fazla 24.000
+
+600x600 tam alan, SS2 sentetik tarama:
+
+- Phase 0: 6.000 aday kotasina ulasir
+- Phase 1: 6.000 aday kotasina ulasir
+- Phase 2: 6.000 aday kotasina ulasir
+- Phase 3: 6.000 aday kotasina ulasir
+- Toplam aday: 24.000
+- Limit: phase bazli olarak uygulandi
+- Phase 3: atlanmadi
+
+600x600 tam alan, SS4 sentetik tarama:
+
+SS4 gridinde her phase'in ham aday sayisi yaklasik 5.121'dir.
+Bu deger 6.000 phase butcesinin altinda kaldigi icin:
+
+- Phase 0: yaklasik 5.121
+- Phase 1: yaklasik 5.120
+- Phase 2: yaklasik 5.159
+- Phase 3: yaklasik 5.159
+- Toplam: yaklasik 20.559
+- Erken limit: yok
+
+Bu durumda dort phase'in tamami doğal olarak taranir.
+
+==================================================
+4. 600x600 SS2 TESTI
+==================================================
+
+Test:
+
+- ImageData: 600 x 600
+- Tek renk, tamamen dolu maske
+- SS2: 0.7 mm
+- spacing: 0.3 mm
+- density: 1.0
+- multi-size: kapali
+
+Motor sonucu:
+
+- Toplam uretilen tas: 11.500
+- Renk grubu: 1
+- Collision: 0
+- Phase 0: ziyaret edildi
+- Phase 1: ziyaret edildi
+- Phase 2: ziyaret edildi
+- Phase 3: ziyaret edildi
+- Phase 2/3 otomatik olarak atlanmadi
+
+Bu test, onceki global limit probleminin yeni phase-bazli butce ile
+cozuldugunu gosterir.
+
+Not: 24.000 aday butcesi aday uretimi icin korunmustur. Final tas sayisi
+collision ve footprint kontrollerinden sonra daha dusuk olabilir.
+
+==================================================
+5. 600x600 SS4 TESTI
+==================================================
+
+Test:
+
+- ImageData: 600 x 600
+- Tek renk, tamamen dolu maske
+- SS4: 1.2 mm
+- spacing: 0.3 mm
+- density: 1.0
+- multi-size: kapali
+
+Motor sonucu:
+
+- Toplam uretilen tas: 5.121
+- Renk grubu: 1
+- Collision: 0
+- Dort phase'in tamami aday uretti
+- 24.000 toplam limiti dolmadi
+
+==================================================
+6. MULTI-SIZE TESTLERI
+==================================================
+
+6.1 Multi-size kapali
+
+- Tek boyutlu tas yerlesimi kullanildi.
+- fillGaps() tek cagrida dört phase'i bagimsiz butcelerle taradi.
+- SS2 ve SS4 testlerinde collision: 0.
+
+6.2 Multi-size acik
+
+- Buyuk tas fillGaps() cagrisi kendi 24.000 toplam butcesini,
+  phase basina 6.000 olarak kullandi.
+- Buyuk taslarin occupancy map'i ile small mask olusturuldu.
+- Kucuk tas fillGaps() cagrisi ayri bir fonksiyon cagrisi olarak yeniden
+  kendi phase butcelerini kullandi.
+- Buyuk ve kucuk gecisler ortak aday sayaci kullanmadi.
+- Mevcut occupancy, footprint ve son collision kontrolleri korundu.
+
+600x600 tam alan multi-size testi:
+
+- ssSizes: SS2 + SS4
+- multi-size: acik
+- Toplam uretilen tas: 5.121
+- Collision: 0
+- Buyuk gecis ve kucuk gecis bagimsiz fillGaps() butceleriyle calisti.
+
+Bu testte buyuk tas gecisi alani doldurdugu icin small mask icin uygun
+aday sayisi sinirli kalabilir. Bu, occupancy davranisinin korunmasidir ve
+phase limit problemi degildir.
+
+==================================================
+7. COLLISION SONUCLARI
+==================================================
+
+Sentetik testlerde iki tas merkezinin uzakligi toplam yaricaplardan kucukse
+collision kabul edildi.
+
+Sonuclar:
+
+- 600x600 tek renk SS2: 0
+- 600x600 tek renk SS4: 0
+- 600x600 iki renk: 0
+- Kose alanlari: 0
+- Ince uzun alan: 0
+- Kivrimli alan: 0
+- Multi-size acik: 0
+- Multi-size kapali: 0
+
+Iki renk testinde renk siniri ihlali de olusmadi.
+
+==================================================
+8. NPM RUN CHECK
+==================================================
+
+Sonuc: PASS
+
+npm run check TypeScript hatasi olmadan tamamlandi.
+
+==================================================
+9. NPM RUN BUILD
+==================================================
+
+Sonuc: PASS
+
+npm run build client ve server production bundle'larini basariyla
+olusturdu.
+
+Build sirasinda mevcut su uyarilar goruldu:
+
+- Browserslist veritabaninin eski olmasi
+- Buyuk JavaScript chunk boyutu
+
+Bu uyarilar build hatasi degildir ve bu fix'in calismasini engellemedi.
+
+==================================================
+10. DEGISEN DOSYALAR
+==================================================
+
+Degistirilen tek kaynak dosya:
+
+- client/src/components/rhinestone-fill-engine.ts
+
+Olusturulan rapor:
+
+- GEREH_RHINESTONE_FILL_SCAN_FIX_REPORT.txt
+
+Degistirilmeyenler:
+
+- client/src/pages/RhinestoneFill.tsx
+- client/src/components/ControlPanel.tsx
+- client/src/components/PatternCanvas.tsx
+- server dosyalari
+- API ve Dashboard save mantigi
+- PostgreSQL ve authentication
+- SVG/DXF/PLT formatlari
+- placeStones() ilk gecisi
+- occupancy, footprint ve collision kontrolleri
+
+==================================================
+SONUC
+==================================================
+
+Bu fix 24.000 sayisini buyutmemistir.
+
+Toplam aday butcesi hala 24.000'dir; fark, bu butcenin artik phase'ler
+arasinda dengeli dagitilmasidir.
+
+Yeni sistemde bir phase kendi kotasini doldurdugunda sadece o phase'in
+aramasi durur. Diger phase'ler mutlaka calisir ve aday uretme sansi bulur.
+
+Boylece fillGaps() alternatif grid fazlarinin tamamini kontrollu,
+dengeli ve browser performansini koruyan bir sekilde tarar.

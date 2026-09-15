@@ -1,0 +1,230 @@
+==================================================
+GEREH AUTOSAVE TIMING FIX REPORT
+==================================================
+
+Tarih: 15.09.2026
+Kapsam: Yalnizca /api/production-saves gecici debug/timing loglari
+
+==================================================
+1. EKLENEN DEBUG NOKTALARI
+==================================================
+
+server/routes.ts icindeki POST /api/production-saves route'una request
+bazli gecici gozlem loglari eklendi.
+
+Her request icin secret veya token icermeyen bir requestId uretiliyor.
+Ayni requestId tum production-save loglarinda kullaniliyor.
+
+Eklenen gozlem bilgileri:
+
+- Request baslangici
+- mode
+- name'in en fazla 200 karakterlik guvenli gorunur degeri
+- SVG UTF-8 byte length
+- DXF UTF-8 byte length
+- PLT UTF-8 byte length
+- SVG + DXF + PLT yaklasik payload byte toplami
+- SVG write baslangic/bitis ve elapsed ms
+- DXF write baslangic/bitis ve elapsed ms
+- PLT write baslangic/bitis ve elapsed ms
+- PDF generation baslangic/bitis ve elapsed ms
+- PDF buffer byte size
+- PDF write baslangic/bitis ve elapsed ms
+- createPattern baslangic/bitis ve elapsed ms
+- updatePatternStatus baslangic/bitis ve elapsed ms
+- updatePatternArchive baslangic/bitis ve elapsed ms
+- COMPLETE status=201 ve toplam sure
+- response finish status, stage ve toplam sure
+- response close status, stage ve toplam sure
+- hata type
+- hata message
+- hata stage
+- hata stack
+- hata toplam suresi
+
+Ornek log formati:
+
+[PRODUCTION-SAVE][requestId] START elapsed=0ms
+[PRODUCTION-SAVE][requestId] mode=rhinestone elapsed=1ms
+[PRODUCTION-SAVE][requestId] name="ornek" elapsed=1ms
+[PRODUCTION-SAVE][requestId] SVG bytes=... elapsed=1ms
+[PRODUCTION-SAVE][requestId] DXF bytes=... elapsed=1ms
+[PRODUCTION-SAVE][requestId] PLT bytes=... elapsed=1ms
+[PRODUCTION-SAVE][requestId] PAYLOAD bytes=... elapsed=1ms
+[PRODUCTION-SAVE][requestId] SVG WRITE START elapsed=2ms
+[PRODUCTION-SAVE][requestId] SVG WRITE END elapsed=...ms
+[PRODUCTION-SAVE][requestId] PDF START elapsed=...ms
+[PRODUCTION-SAVE][requestId] PDF END elapsed=...ms
+[PRODUCTION-SAVE][requestId] PDF bytes=... elapsed=...ms
+[PRODUCTION-SAVE][requestId] COMPLETE status=201 elapsed=...ms
+[PRODUCTION-SAVE][requestId] RESPONSE FINISH status=201 stage=complete total=...ms
+[PRODUCTION-SAVE][requestId] RESPONSE CLOSE status=201 stage=complete total=...ms
+
+Hata durumunda SVG/DXF/PLT icerigi loglanmaz; yalnizca byte sayilari ve
+hata bilgileri loglanir. Token, password ve authentication verisi loglanmaz.
+
+==================================================
+2. DEGISEN TEK DOSYA
+==================================================
+
+Kaynak olarak degistirilen tek dosya:
+
+- server/routes.ts
+
+Olusturulan rapor dosyasi:
+
+- GEREH_AUTOSAVE_TIMING_FIX_REPORT.txt
+
+Bu rapor kaynak koduna dahil olan production davranis degisikligi degildir;
+istenen debug calismasinin raporudur.
+
+Degistirilmeyenler:
+
+- client/src/components/rhinestone-fill-engine.ts
+- client/src/pages/RhinestoneFill.tsx
+- client/src/components/ControlPanel.tsx
+- client/src/components/PatternCanvas.tsx
+- server/storage.ts
+- server/image-worker.ts
+- shared/routes.ts
+- shared/schema.ts
+- authentication ve lisans akisi
+- PDF uretim mantigi
+- SVG/DXF/PLT yazma mantigi
+- response akis sirasi
+- database yapisi
+
+==================================================
+3. CHECK SONUCU
+==================================================
+
+Komut:
+
+  npm run check
+
+Sonuc:
+
+  PASS
+
+TypeScript kontrolu hatasiz tamamlandi.
+
+==================================================
+4. BUILD SONUCU
+==================================================
+
+Komut:
+
+  npm run build
+
+Sonuc:
+
+  PASS
+
+Client ve server production bundle'lari basariyla olusturuldu.
+
+Build sirasinda mevcut su uyarilar goruldu:
+
+- Browserslist veritabaninin eski olmasi
+- Buyuk JavaScript chunk boyutu
+
+Bu uyarilar build hatasi degildir.
+
+==================================================
+5. LOG SONUCLARI NASIL YORUMLANMALI?
+==================================================
+
+A) RESPONSE FINISH status=201 goruluyor:
+
+- Express route tamamlanmistir.
+- PDF, dosya yazma ve DB kayit adimlari tamamlanmistir.
+- Browser'daki 502 ayri bir proxy/connection iletim sorunu olabilir.
+
+B) RESPONSE CLOSE var, FINISH yok:
+
+- Client veya Render proxy response tamamlanmadan baglantiyi kapatmis
+  olabilir.
+- currentStage ve son elapsed degeri kopusun hangi adim civarinda
+  oldugunu gosterir.
+
+C) PDF START var, PDF END yok:
+
+- PDF conversion asamasinda uzun calisma, exception, process kapanmasi
+  veya upstream kopusu arastirilmalidir.
+
+D) PDF END var, PDF WRITE END yok:
+
+- PDF buffer olusmustur; dosya yazma veya filesystem problemi incelenir.
+
+E) PDF WRITE END var, CREATE PATTERN END yok:
+
+- SQLite insert veya createPattern adimi incelenir.
+
+F) Hata logu stage=error:<asama>:
+
+- Express route catch bloguna girmistir.
+- Bu durumda normal response 500 olmali; hata stack'i asil exception'i
+  gosterir.
+
+G) Express finish logu hic yok ve Browser 502 aliyor:
+
+- Render proxy timeout, upstream process crash veya connection reset
+  olasiligi guclenir.
+
+==================================================
+6. DAVRANIS KORUMASI
+==================================================
+
+Bu degisiklik:
+
+- PDF uretim fonksiyonunu degistirmedi.
+- Dosya yazma siralamasini degistirmedi.
+- DB sorgularini degistirmedi.
+- Response status kodlarini degistirmedi.
+- Response donus zamanlamasini bilerek degistirmedi.
+- Rhinestone Fill uretim algoritmasina dokunmadi.
+- SVG/DXF/PLT iceriklerini loglamadi.
+- Secret/token/password loglamadi.
+
+Tek amac production-saves request'inin hangi asamada ve kac ms'de
+sonuclandigini Render loglarindan gorunur hale getirmektir.
+
+==================================================
+7. TEST SONRASI BEKLENEN KULLANIM
+==================================================
+
+Render'a debug build deploy edildikten sonra RhinestoneFill ile bir test
+calistirilmalidir. Ayni requestId'ye ait tum log satirlari Render logundan
+alinmalidir.
+
+Kaydedilmesi gerekenler:
+
+- requestId
+- payload byte toplami
+- PDF byte size
+- her stage elapsed ms
+- response finish/close
+- response status
+- hata varsa stage/type/message/stack
+
+Bu veriler, 502'nin:
+
+- Render proxy timeout
+- upstream process kapanmasi
+- PDF conversion
+- filesystem
+- SQLite
+
+kaynakli olup olmadigini ayirmaya yarar.
+
+==================================================
+FINAL
+==================================================
+
+- Debug instrumentation eklendi: EVET
+- Yalnizca server/routes.ts degisti: EVET
+- Rhinestone Fill algoritmasi degisti: HAYIR
+- PDF/file/DB response akisi degisti: HAYIR
+- Secret/token/password loglandi: HAYIR
+- npm run check: PASS
+- npm run build: PASS
+- Commit/push: YAPILMADI

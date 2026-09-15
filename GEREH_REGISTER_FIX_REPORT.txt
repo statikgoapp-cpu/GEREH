@@ -1,0 +1,63 @@
+GEREH REGISTER FIX REPORT
+Tarih: 2026-09-06
+
+YAPILAN DEGISIKLIK
+
+SQLite startup initialization sirasinda users tablosu eklendi.
+
+Eklenen ensureUsersTable() fonksiyonu:
+- users tablosunu CREATE TABLE IF NOT EXISTS ile olusturur.
+- id alanini AUTOINCREMENT primary key olarak tanimlar.
+- email alanini TEXT NOT NULL UNIQUE olarak tanimlar.
+- password_hash ve name alanlarini NOT NULL olarak tanimlar.
+- role, plan ve status alanlari icin mevcut schema ile uyumlu default degerleri korur.
+- created_at ve updated_at alanlarini NOT NULL ve CURRENT_TIMESTAMP default ile tanimlar.
+
+ensureUsersTable(), ensurePatternsTable() ve ensurePatternsColumns() cagrisindan once startup sirasinda calistirilir.
+Mevcut patterns initialization davranisi degistirilmemistir.
+PostgreSQL'e gecis yapilmamistir.
+SQLite mimarisi korunmustur.
+
+DEGISTIRILEN TEK KAYNAK DOSYASI
+
+server/db.ts
+
+CHECK SONUCU
+
+Komut:
+  npm run check
+
+Sonuc:
+  BASARILI
+
+BUILD SONUCU
+
+Komut:
+  npm run build
+
+Sonuc:
+  BASARILI
+
+Vite, client production bundle'ini basariyla olusturdu.
+Server bundle'lari basariyla olusturuldu:
+- dist/index.cjs
+- dist/image-worker.cjs
+
+Build sirasinda Vite tarafindan mevcut buyuk bundle boyutu uyarisi verildi; bu uyari build'i basarisiz yapmadi.
+
+DEGISIKLIK DISINDA DOKUNULMAYAN DOSYALAR
+
+- server/routes.ts
+- server/auth.ts
+- server/storage.ts
+- shared/schema.ts
+- package.json
+- .gitignore
+- Render deployment dosyalari
+- Diger kaynak kod dosyalari
+
+Not: npm run build tarafindan uretilen dist ciktilari build artefaktlaridir; bu fix kapsaminda kaynak kod olarak degistirilmemistir.
+
+SONUC
+
+Render'daki `SqliteError: no such table: users` hatasinin kaynagi olan eksik users tablosu startup initialization'a eklendi. Yeni veya bos neural.db ile baslayan production instance'larda registration sorgusu artik users tablosu eksikligi nedeniyle patlamamalidir.

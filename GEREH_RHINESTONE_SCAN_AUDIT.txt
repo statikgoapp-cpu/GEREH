@@ -1,0 +1,561 @@
+==================================================
+RHINESTONE FILL SCAN AUDIT
+==================================================
+
+Tarih: 14.09.2026
+Kapsam: Yalnizca client tarafindaki RhinestoneFill tarama ve gap filling akisi
+Kaynak dosyalar: Sadece okunmustur. Bu audit sirasinda kaynak dosya degistirilmemistir.
+
+==================================================
+1. GOZLENEN PROBLEM
+==================================================
+
+Gercek gorsellerde bazi renk bolgelerinde rastgele tekil tas bosluklari
+yerine daha sistematik eksik alanlar gorulmektedir. Farkli logolarda eksik
+alanin yeri degisse de ortak davranis, bazi bosluklarin ilk yerlesimden
+sonra alternatif aday konumlariyla tekrar doldurulamamasidir.
+
+Mevcut kod iki farkli tarama asamasi kullaniyor:
+
+1. placeStones(): Ana, tek-fazli hex grid taramasi.
+2. fillGaps(): Ana taramadan sonra alternatif grid fazlariyla bosluk
+   doldurma taramasi.
+
+Kesin kod bulgusu sudur:
+
+- placeStones() icinde adayi erken kesen 24.000 limiti yoktur.
+- fillGaps() icinde 24.000 adaylik global bir limit vardir.
+- Bu limit, alternatif grid fazlarinin tamamini taramadan ic ice
+  dongulerden cikabilir.
+
+Bu nedenle sorun, temel goruntunun hic taranmamasi degil; temel taramanin
+birakabildigi bosluklari kapatmasi beklenen alternatif fazlarin bazi
+bolgelerde hic uretilmemesi veya eksik uretilmesidir.
+
+==================================================
+2. ISLEME ALANI NASIL TARANIYOR?
+==================================================
+
+2.1 placeStones() ana taramasi
+
+placeStones() su degerleri kullanir:
+
+  gridSpacingX = radiusPx * 2 + spacing * scale
+  gridSpacingY = gridSpacingX * (sqrt(3) / 2)
+
+Ana dongu:
+
+  for (let row = 0; row * gridSpacingY < height + radiusPx; row++)
+  for (let col = 0; col * gridSpacingX - offsetX < width + radiusPx; col++)
+
+Her aday icin:
+
+  cx = col * gridSpacingX - offsetX + radiusPx
+  cy = row * gridSpacingY + radiusPx
+
+Ardindan:
+
+- cx/cy goruntu sinirlari disindaysa continue
+- Math.round(cx), Math.round(cy) ile piksel konumu elde edilir
+- mask[py * width + px] okunur
+- distance transform esigi kontrol edilir
+- uygun aday tas olarak eklenir
+
+placeStones() icinde return veya global candidate limit nedeniyle erken
+sonlanma yoktur. Bu nedenle ana phase, kendi grid noktalarinin tum goruntu
+boyunca taranmasini tamamlar.
+
+2.2 fillGaps() ikinci taramasi
+
+fillGaps() dort grid phase kullanir:
+
+  phase 0: [0, 0]
+  phase 1: [gridSpacingX * 0.5, gridSpacingY * 0.5]
+  phase 2: [gridSpacingX * 0.25, gridSpacingY * 0.5]
+  phase 3: [gridSpacingX * 0.75, gridSpacingY * 0.5]
+
+fillGaps() satir ve sutun donguleri -1 degerinden baslar. Bu, kenar
+adaylarini kapsama amacli gorunuyor. Negatif ilk satir/sutun adaylari
+sinir kontroluyle eleniyor; bu kisim alt bolgenin atlanmasina neden olan
+bir erken cikis degildir.
+
+Ancak fillGaps() adaylari tum phase'lerden tek bir candidates listesinde
+toplar ve bu listenin ust siniri vardir:
+
+  const maxCandidates = 24000;
+
+Aday eklendikten hemen sonra:
+
+  if (candidates.length >= maxCandidates) break;
+
+Sonra satir dongusu ve phase dongusu de ayni kosulla break olur.
+
+==================================================
+3. KOORDINAT SISTEMLERI
+==================================================
+
+RhinestoneFill tarafinda tek bir piksel koordinat sistemi kullaniliyor:
+
+- ImageData width/height
+- mask width/height
+- distance transform width/height
+- occupancy map width/height
+- PatternCanvas canvas width/height
+
+Gorsel hazirlama RhinestoneFill.tsx icinde yapiliyor:
+
+- maxDim = 600
+- Kaynak gorselin orani korunuyor.
+- Canvas width ve height, kucultulmus ImageData boyutlarina ayarlaniyor.
+- generateRhinestonePattern() ayni ImageData width/height degerlerini
+  kullaniyor.
+
+Bu auditte Canvas koordinatlari ile ImageData koordinatlari arasinda
+ayri bir scale veya offset uygulanmadigi gorulmustur. PatternCanvas da
+canvas.width = pattern.width ve canvas.height = pattern.height kullanir.
+
+Sonuc: Global bir canvas/ImageData koordinat karisikligi bulunmadi.
+
+==================================================
+4. MASK KOORDINATLARI
+==================================================
+
+buildMask() su boyutta maske olusturur:
+
+  new Uint8Array(width * height)
+
+Piksel yazma indeksi:
+
+  mask[y * width + x] = 1
+
+Bu, ImageData erisimindeki su indeksle ayni koordinat sistemindedir:
+
+  const idx = (y * width + x) * 4
+
+buildMask() centroid'e en yakin rengi bulur ve ilgili centroid'e ait
+pikselleri maskeye yazar.
+
+Maskede ayri bir bounding box hesaplanmiyor. Maske her zaman tam width x
+height goruntu alaninda olusturuluyor. Bu nedenle yanlis bir renk-bolge
+bounding box'inin alt veya ust alani kesmesi sorunu yoktur.
+
+==================================================
+5. OCCUPANCY KOORDINATLARI
+==================================================
+
+buildOccupancyMap() ve addStoneToOccupancy() ayni piksel koordinatlarini
+kullanir:
+
+  px = Math.round(stone.x + dx)
+  py = Math.round(stone.y + dy)
+  key = py * width + px
+
+Occupancy map:
+
+  Set<number>
+
+Seklindedir. Maskedeki key formati da aynidir:
+
+  y * width + x
+
+Dolayisiyla occupancy map ile maskenin koordinat sistemleri uyumludur.
+
+Sinirlama:
+Occupancy map tas dairesinin kapladigi pikselleri tutar; ancak bu map
+kendisi bir renk maskesi degildir. buildSmallStoneMask() su mantigi
+kullanir:
+
+  if (mask[i] && !occupied.has(i)) newMask[i] = 1
+
+Bu, buyuk taslarin kapladigi pikselleri sonraki kucuk tas taramasindan
+cikarir. Koordinat uyumsuzlugu yoktur; fakat buyuk taslarin etkiledigi
+alan, sonraki kucuk taslar icin bilincli olarak kullanilamaz hale gelir.
+
+==================================================
+6. GRID PHASE SISTEMI
+==================================================
+
+Ana placeStones() yalnizca bir phase kullanir:
+
+- Cift satir offset = 0
+- Tek satir offset = gridSpacingX / 2
+
+fillGaps() alternatif phase'ler dener. Bu, ilk gridde iki tas arasinda
+kalan ve baska bir merkezle doldurulabilecek bosluklari kapatmak icin
+dogru bir fikirdir.
+
+Fakat phase'ler sirayla ve ayni aday listesine eklenir:
+
+  phase 0 -> phase 1 -> phase 2 -> phase 3
+
+Adaylar phase uzerinde siralandiktan sonra score'a gore siralanir.
+Aday sayisi limiti dolarsa sonraki phase'lerin tamamini veya bir kismini
+hic uretemez.
+
+Bu durum, ozellikle ilk placeStones taslari nedeniyle phase 0/1 adaylarinin
+cogu collision'a takildiginda onemlidir. Boslugu gercekten kapatabilecek
+phase 2/3 adayi listeye hic girmemis olabilir.
+
+==================================================
+7. CANDIDATE LIMITLERI
+==================================================
+
+Kodda bulunan limit:
+
+  const maxCandidates = 24000;
+
+Bu limit:
+
+- Renk clustering limiti degildir.
+- placeStones() limiti degildir.
+- removeCollisions() limiti degildir.
+- Tum generateRhinestonePattern() icin global degildir.
+- Tum renkler icin ortak bir sayaç degildir.
+- Phase basina 24.000 degildir.
+
+Gercek kapsami:
+
+Bu limit her tek fillGaps() fonksiyon cagrisi icin yerel olarak
+olusturulur. Her cagrida su satir yeniden calisir:
+
+  const candidates = []
+  const maxCandidates = 24000
+
+Dolayisiyla limit su baglamlarda ayri ayri uygulanir:
+
+- Her centroid/mask isleme cagrisi icin
+- Multi-size kapaliysa secilen tas boyutu icin
+- Multi-size aciksa buyuk tas fillGaps() cagrisi icin
+- Multi-size aciksa kucuk tas fillGaps() cagrisi icin
+
+Ayni renk icin birden fazla centroid olusursa her centroid dongusunde
+ayri fillGaps() limiti vardir. Bu, limitin renk basina tek ortak limit
+olmadigi anlamina gelir.
+
+==================================================
+8. 24.000 SINIRI
+==================================================
+
+600x600 testinde scale su olur:
+
+  scale = min(600, 600) / 100 = 6
+
+SS2 icin:
+
+  radiusPx = (0.7 / 2) * 6 = 2.1 px
+  gridSpacingX = 2 * 2.1 + 0.3 * 6 = 6 px
+  gridSpacingY yaklasik 5.196 px
+
+Tam 600x600 alanda, kenar distance filtresi hesaba katilmadan onceki
+phase aday sayilari yaklasik olarak:
+
+  phase 0: 11.600
+  phase 1: 11.500
+  phase 2: 11.500
+  phase 3: 11.500
+  toplam: 46.100
+
+24.000 limiti bu durumda kesindir. Ilk iki phase tamamen taranabilir,
+phase 2'nin bir kismi taranir ve phase 3'e hic ulasilmayabilir.
+
+Ham grid simülasyonunda limit su noktada doldu:
+
+  phase: 2
+  row: 8
+  col: 99
+  toplam aday: 24.000
+
+Bu hesaplama maskesi tamamen dolu 600x600 alan icindir. Gercek distance
+transform kenar filtresi aday sayisini azaltabilir; ancak aday sayisi
+24.000'i asabilecek kadar yogun kucuk tas gridlerinde limit yine aktif
+olabilir.
+
+SS4 icin:
+
+  radiusPx = 3.6 px
+  gridSpacingX = 9 px
+
+600x600 tam alan ham phase toplaminda yaklasik 20.559 aday vardir.
+Bu durumda 24.000 limiti asilmadan dort phase'in tamamina ulasilir.
+
+SS20 icin:
+
+  radiusPx = 15 px
+  gridSpacingX = 31.8 px
+
+Toplam ham phase adayi yaklasik 1.650 seviyesindedir. Limit aktif olmaz.
+
+Sonuc:
+24.000 limiti ozellikle SS2 ve benzeri kucuk taslarda gercek bir
+erken kesme nedenidir. Limit global olarak tum algoritmayi kesmez; fakat
+tek bir fillGaps() cagrisi icinde alternatif phase taramasini keser.
+
+==================================================
+9. EARLY BREAK / RETURN / CONTINUE
+==================================================
+
+placeStones():
+
+- Dongulerde continue vardir.
+- Continue sadece aday goruntu disindaysa, maskede degilse veya distance
+  esigi karsilanmiyorsa o adayi atlar.
+- Erken break yoktur.
+- Fonksiyon donguler tamamlandiktan sonra return eder.
+
+fillGaps():
+
+- x/y goruntu disindaki adaylar continue ile atlanir.
+- Maskede olmayan veya edge distance yetersiz olan adaylar continue ile
+  atlanir.
+- candidates.length >= 24000 kosulu icteki col, row ve phase dongulerini
+  sirayla break eder.
+- Bu, sonraki phase'lerin taranmasini engeller.
+
+fillGaps() kabul asamasi:
+
+- isStoneInsideMask() basarisizsa continue
+- isStoneCollisionFree() basarisizsa continue
+- Uygun aday occupancy map'e eklenir
+
+Bu retler tarama dongusunu kesmez; yalnizca adayi eler.
+
+buildSmallStoneMask():
+
+- Tum mask.length boyunca tek donguyle ilerler.
+- Erken break yoktur.
+- Maskenin alt veya ust kismi atlanmaz.
+
+generateRhinestonePattern():
+
+- Her centroid icin mask ve distance transform hesaplar.
+- Multi-size gecislerini tamamlar.
+- Erken return yalnizca pixels.length === 0 durumundadir.
+
+==================================================
+10. BOUNDING BOX
+==================================================
+
+Kodda renk maskeleri icin ayri bir bounding box hesaplanmiyor.
+
+Bu olumlu bir bulgudur:
+
+- Renk bolgesi x0/x1 veya y0/y1 ile kesilmiyor.
+- Maske tam width * height alani uzerinde tutuluyor.
+- placeStones() ve fillGaps() de tam goruntu sinirlarini kullaniyor.
+
+fillGaps() adaylarinin dongu baslangici -1 olsa da bu bir bounding box
+kesmesi degildir. Sadece grid noktalarinin goruntu kenarina yakin
+baslatilmasini saglar; goruntu disi adaylar continue ile atilir.
+
+==================================================
+11. RESIZE SONRASI KOORDINATLAR
+==================================================
+
+RhinestoneFill.tsx icindeki prepareImageData():
+
+- maxDim = 600
+- sourceWidth/sourceHeight kaynak gorselden alinir.
+- scaleFactor = min(1, 600 / max(sourceWidth, sourceHeight))
+- w/h round edilerek yeni canvas boyutu olur.
+- drawImage(img, 0, 0, w, h) ile gorsel bu canvas'a cizilir.
+- ctx.getImageData(0, 0, w, h) doner.
+
+Bu islemden sonra motor icinde yeni ImageData koordinatlari kullanilir.
+Gorsel tekrar kaynak boyutuna donusturulmez. Bu nedenle resize sonrasi
+motorun kullandigi width/height ile ImageData tamamen uyumludur.
+
+Buradaki asil risk koordinat karisikligi degil, kucuk detaylarin 600 px'e
+indirgenirken kaybolabilmesidir. Bu durum belirli bir alt bolgenin bir
+anda atlanmasini degil, kucuk renk parcalarinin maskede kaybolmasini veya
+centroid'e farkli atanmasini aciklayabilir.
+
+==================================================
+12. GERCEKTEN ISLENMEYEN BIR ALAN VAR MI?
+==================================================
+
+Kesin ayrim:
+
+A) Ana placeStones() taramasi icin:
+
+- Tum grid satir ve sutunlari goruntu sinirlarina kadar ziyaret edilir.
+- Erken candidate limiti yoktur.
+- Bu nedenle ana scan'de 24.000 limiti yuzunden bir alt bolge hic
+  taranmiyor denemez.
+
+B) fillGaps() alternatif fazlari icin:
+
+- Evet, 24.000 limiti nedeniyle alternatif phase'lerin bir bolumu hic
+  ziyaret edilmeyebilir.
+- SS2 gibi kucuk taslarda phase 3 tamamen, phase 2 ise kismen atlanabilir.
+- Bu, ilk tarama tarafindan zaten dolmayan bosluklarin bazi alternatif
+  merkezlerle kapatilmasini engelleyebilir.
+
+Dolayisiyla raporun kesin sonucu sudur:
+
+Algoritma goruntunun tamamini hic taramiyor degil. Ancak gap filling icin
+kullanilan alternatif aday uzayinin tamamini her zaman taramiyor.
+
+Bu ayrim gercek testte gorulen sistematik bolge eksiklikleriyle uyumludur:
+Eksik bolge, temel gridin degil, sadece bazi alternatif phase'lerin
+kapatabilecegi bir bosluk olabilir. Bu phase limitle kesildiginde eksik
+alan rastgele tek taslar yerine daha buyuk bir bolge gibi gorunebilir.
+
+==================================================
+13. KESIN KOK NEDEN
+==================================================
+
+Kesin olarak dogrulanan kok neden:
+
+fillGaps() icindeki maxCandidates = 24000 degerinin tum phase'ler icin
+ortak, fonksiyon-cagrisi-basi global bir aday limiti olmasidir.
+
+Bu limit kucuk tas gridlerinde phase 2/3 adaylarina ulasilmadan once
+calisir. Bu nedenle gap filling'in tasarlandigi alternatif grid arama
+alani eksik kalir.
+
+Katki yapan ikinci algoritmik problem:
+
+placeStones() yalnizca merkez pikselini maskede kontrol eder ve ilk
+phase'in sabit hex yerlesimini kullanir. Bu nedenle ilk scan bazi uygun
+bosluk merkezlerini dogal olarak kacirabilir.
+
+Katki yapan ucuncu problem:
+
+fillGaps() icindeki isStoneInsideMask() ve collision kontrolleri adaylari
+filtreler. Ancak aday phase'i hic uretilmemisse bu kontrollerin olumlu
+olma sansi yoktur. Yani asil erken eksilme aday uretim asamasindadir.
+
+Kesinlikle kok neden olarak bulunmayanlar:
+
+- Mask ve ImageData width/height uyumsuzlugu
+- Occupancy key koordinat uyumsuzlugu
+- Yanlis renk bounding box'i
+- placeStones() icinde erken return
+- PatternCanvas'in motor koordinatlarini degistirmesi
+- DXF/SVG/PLT export islemi
+
+24.000 siniri tek basina her gercek gorselde eksik alt bolge olacagini
+kanıtlamaz. Fakat SS2/kucuk tas ve yogun alanlarda gap pass'in alternatif
+fazlarini eksik taradigi kod ve sayisal 600x600 simulasyonla kesin olarak
+dogrulanmistir.
+
+==================================================
+14. EN KUCUK DOGRU COZUM
+==================================================
+
+Bu audit sirasinda kaynak dosya degistirilmemistir.
+
+En kucuk dogru cozum secenekleri:
+
+1. Aday limitini phase'ler arasinda ortak kullanmak yerine phase basina
+   sinirlamak. Boylece her phase makul bir aday kotasiyle taranir.
+
+2. Daha dogru secenek: Adaylari tum phase'lerden toplamaya devam etmek,
+   ancak limit doldugunda phase dongusunu kesmemek ve her phase icin
+   dengeli bir kota kullanmak.
+
+3. Alternatif olarak adaylari onceden score'layip, her phase'ten esit veya
+   maskenin farkli alanlarindan temsilci adaylar almak.
+
+4. En basit kontrollu duzeltme: 24.000 limitini gorsel boyutu, radius ve
+   phase sayisina gore hesaplanan bir ust sinira cevirmek. Ancak sadece
+   limiti buyutmek browser maliyetini artirir ve tek basina en iyi cozum
+   degildir.
+
+En guvenli minimum degisiklik, ilk placeStones() davranisini koruyup
+fillGaps() icindeki global 24.000 kesmesini phase'lerin tamamini temsil
+edecek sekilde yeniden dagitmaktir. Collision, footprint ve occupancy
+kontrolleri korunmalidir.
+
+==================================================
+15. HANGI DOSYA DEGISMELI?
+==================================================
+
+Birincil degisiklik dosyasi:
+
+client/src/components/rhinestone-fill-engine.ts
+
+Olasilikla sadece fillGaps() icindeki candidate generation ve limit
+mantigi degismelidir.
+
+Degismesi gerekmeyen dosyalar:
+
+- client/src/pages/RhinestoneFill.tsx
+- client/src/components/ControlPanel.tsx
+- client/src/components/PatternCanvas.tsx
+
+Neden:
+
+- RhinestoneFill.tsx yalnizca ImageData hazirlar ve motoru cagirir.
+- ControlPanel ayarlarin anlamini belirler; kok tarama hatasi burada degil.
+- PatternCanvas yalnizca uretilmis taslari cizer; aday uretimini etkilemez.
+
+==================================================
+16. DOSYA DEGISIKLIGINDEN SONRA NASIL TEST EDILMELI?
+==================================================
+
+Bu audit sonrasi henuz kaynak duzeltmesi yapilmamistir. Duzeltme
+uygulandiktan sonra su testler yapilmalidir:
+
+1. 600x600 tamamen tek renk maske:
+   - SS2 ve SS4 ayri ayri denenmeli.
+   - Ziyaret edilen min/max x/y yazdirilmali.
+   - Her phase aday sayisi ayri raporlanmali.
+   - Candidate limit nedeniyle kesilme false olmali.
+
+2. 600x600 ortasinda farkli renk alan:
+   - Iki renk maskesinin her birinde min/max x/y kontrol edilmeli.
+   - Renkler birbirinin maskesine tas mamali.
+
+3. Kose alanlari da dahil 600x600 tam alan:
+   - Dorde bir kose icin aday ve kabul sayilari ayri kontrol edilmeli.
+   - Kenar distance filtresi nedeniyle kontrollu ret ile scan edilmemeyi
+     birbirinden ayirmak gerekir.
+
+4. Gercek logolar:
+   - Bir renk maskesi icin ziyaret minX/maxX/minY/maxY
+   - Toplam candidate sayisi
+   - Kabul edilen candidate sayisi
+   - Maske nedeniyle ret sayisi
+   - Collision nedeniyle ret sayisi
+   - Boundary nedeniyle ret sayisi
+   - Candidate limit nedeniyle kesilme bilgisi
+
+5. Multi-size acik:
+   - Buyuk fillGaps() ve kucuk fillGaps() ayri loglanmali.
+   - Kucuk pass'in phase 2/3'e ulasip ulasmadigi kontrol edilmeli.
+
+6. Multi-size kapali:
+   - Secilen tek boyutun tum phase'leri taramasi kontrol edilmeli.
+
+Onerilen gecici instrumentation noktasi:
+
+- fillGaps() girisinde width, height, radiusPx, gridSpacingX/Y
+- Her phase basinda phase index
+- Aday push satirinda candidateCount ve x/y min/max
+- maxCandidates break'inden hemen once limitReached=true
+- isStoneInsideMask() oncesi ve sonrasi maskReject sayaci
+- isStoneCollisionFree() oncesi ve sonrasi collisionReject sayaci
+- addStoneToOccupancy() sonrasinda accepted sayaci
+- Fonksiyon sonunda phase bazli ozet
+
+Bu instrumentation kalici olarak commit edilmemeli; test sonrasinda
+kaldirilmalidir.
+
+==================================================
+SON AUDIT SONUCU
+==================================================
+
+- Kaynak dosya degistirildi mi?: HAYIR
+- Ana placeStones() tum goruntu sinirlarini tarayabiliyor mu?: EVET
+- fillGaps() tum alternatif phase'leri her zaman tarayabiliyor mu?: HAYIR
+- 24.000 limiti var mi?: EVET
+- Limit kapsamı: Her fillGaps() cagrisi icin global
+- Phase basina mi?: HAYIR
+- Renk basina ortak mi?: HAYIR; centroid/mask cagrisi basina ayri
+- Buyuk/kucuk gecisler ortak mi?: HAYIR; her fillGaps() cagrisi ayri
+- 600x600 SS2 tam alanda limit asiliyor mu?: EVET
+- Mask/occupancy koordinat uyumsuzlugu bulundu mu?: HAYIR
+- Yanlis bounding box bulundu mu?: HAYIR
+- Kesin ana kok neden: Alternatif phase adaylarinin 24.000 global
+  fillGaps limiti nedeniyle eksik uretilmesi.

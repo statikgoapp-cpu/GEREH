@@ -1,0 +1,59 @@
+GEREH PDF FIX REPORT
+Tarih: 2026-09-06
+
+DEGISTIRILEN DOSYA
+
+server/storage.ts
+
+YAPILAN DEGISIKLIK
+
+getPatternByFileUrl() fonksiyonu guncellendi.
+
+Mevcut davranis korunarak su kontroller devam ediyor:
+- imageUrl === fileUrl
+- svgUrl === fileUrl
+- dxfUrl === fileUrl
+- userId ownership kontrolu
+
+fileUrl `.pdf` ile bitiyorsa:
+- `.pdf` uzantisi kaldirilarak ayni base filename olusturuluyor.
+- `${base}.svg` patterns.svgUrl karsiligi olarak kontrol ediliyor.
+- `${base}.dxf` patterns.dxfUrl karsiligi olarak kontrol ediliyor.
+
+Baska endpoint, authentication, schema, worker, frontend veya veritabani mimarisi degistirilmedi.
+
+PDF OWNERSHIP KONTROLU NASIL CALISIYOR?
+
+Ornek PDF URL:
+  /processed/ABC123.pdf
+
+Ownership sorgusu su karsiliklari kontrol eder:
+  /processed/ABC123.svg
+  /processed/ABC123.dxf
+
+Pattern, mevcut userId ile birlikte bu SVG veya DXF metadata degerlerinden biriyle eslesirse PDF dosyasina erisim verilir. Eslesme yoksa mevcut davranis korunur ve dosya bulunamadi sonucu doner.
+
+Bu yaklasim PDF dosyasini public yapmaz, authentication'i kaldirmaz ve userId ownership kontrolunu korur.
+
+CHECK SONUCU
+
+Komut:
+  npm run check
+
+Sonuc:
+  BASARILI
+
+BUILD SONUCU
+
+Komut:
+  npm run build
+
+Sonuc:
+  BASARILI
+
+Production client ve server bundle'lari olusturuldu.
+Vite tarafinda mevcut buyuk bundle boyutu uyarisi goruldu; build basarisiz olmadi.
+
+COMMIT / PUSH
+
+Commit veya push yapilmadi.

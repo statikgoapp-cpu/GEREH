@@ -447,7 +447,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/production-saves", authenticateToken, upload.none(), async (req: any, res) => {
+    const requestId = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    const routeStartedAt = Date.now();
+    let currentStage = "route-start";
+    const elapsed = () => Date.now() - routeStartedAt;
+    const debugLog = (message: string) => {
+      logInfo(`[PRODUCTION-SAVE][${requestId}] ${message} elapsed=${elapsed()}ms`);
+    };
+
+    debugLog("START");
+    res.on("finish", () => {
+      logInfo(
+        `[PRODUCTION-SAVE][${requestId}] RESPONSE FINISH status=${res.statusCode} stage=${currentStage} total=${elapsed()}ms`,
+      );
+    });
+    res.on("close", () => {
+      logInfo(
+        `[PRODUCTION-SAVE][${requestId}] RESPONSE CLOSE status=${res.statusCode} stage=${currentStage} total=${elapsed()}ms`,
+      );
+    });
+
     try {
+      currentStage = "request-parsed";
       ensureLicensed();
       const mode = String(req.body?.mode ??"rhinestone").toLowerCase();
       const normalizedMode = mode === "pattern" ?"pattern" : "rhinestone";
@@ -455,6 +476,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const dxf = typeof req.body?.dxf === "string" ?req.body.dxf : "";
       const plt = typeof req.body?.plt === "string" ?req.body.plt : "";
       const name = typeof req.body?.name === "string" && req.body.name.trim() ?req.body.name.trim() : `${normalizedMode}-session`;
+      const svgBytes = Buffer.byteLength(svg, "utf8");
+      const dxfBytes = Buffer.byteLength(dxf, "utf8");
+      const pltBytes = Buffer.byteLength(plt, "utf8");
+      debugLog(`mode=${normalizedMode}`);
+      debugLog(`name=${JSON.stringify(name.slice(0, 200))}`);
+      debugLog(`SVG bytes=${svgBytes}`);
+      debugLog(`DXF bytes=${dxfBytes}`);
+      debugLog(`PLT bytes=${pltBytes}`);
+      debugLog(`PAYLOAD bytes=${svgBytes + dxfBytes + pltBytes}`);
       if (!svg.includes("<svg")) {
         return res.status(400).json({ message: "SVG content is required" });
       }
@@ -466,14 +496,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const dxfFs = path.join(PROCESSED_DIR, `${base}.dxf`);
       const pltFs = path.join(PROCESSED_DIR, `${base}.plt`);
       const pdfFs = path.join(PROCESSED_DIR, `${base}.pdf`);
+      currentStage = "svg-write";
+      debugLog("SVG WRITE START");
       await fsp.writeFile(svgFs, svg, "utf-8");
-      if (dxf.trim().length > 0) await fsp.writeFile(dxfFs, dxf, "utf-8");
-      if (plt.trim().length > 0) await fsp.writeFile(pltFs, plt, "utf-8");
+      debugLog("SVG WRITE END");
+      if (dxf.trim().length > 0) {
+        currentStage = "dxf-write";
+        debugLog("DXF WRITE START");
+        await fsp.writeFile(dxfFs, dxf, "utf-8");
+        debugLog("DXF WRITE END");
+      }
+      if (plt.trim().length > 0) {
+        currentStage = "plt-write";
+        debugLog("PLT WRITE START");
+        await fsp.writeFile(pltFs, plt, "utf-8");
+        debugLog("PLT WRITE END");
+      }
+      currentStage = "pdf-generation";
+      debugLog("PDF START");
       const pdfBuffer = await renderSvgToPdfBuffer(svg);
+      debugLog("PDF END");
+      debugLog(`PDF bytes=${pdfBuffer.byteLength}`);
+      currentStage = "pdf-write";
+      debugLog("PDF WRITE START");
       await fsp.writeFile(pdfFs, pdfBuffer);
+      debugLog("PDF WRITE END");
 
       const svgUrl = `/processed/${base}.svg`;
       const dxfUrl = dxf.trim().length > 0 ?`/processed/${base}.dxf` : null;
+      currentStage = "db-insert";
+      debugLog("CREATE PATTERN START");
       const created = await storage.createPattern({
         userId: req.user.userId,
         name,
@@ -484,17 +536,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         vectorDiameterMm: null,
         holeDiameterMm: null,
       });
+      debugLog("CREATE PATTERN END");
+      currentStage = "db-status-update";
+      debugLog("UPDATE PATTERN STATUS START");
       await storage.updatePatternStatus(created.id, "completed", svgUrl, dxfUrl ??undefined, req.user.userId);
+      debugLog("UPDATE PATTERN STATUS END");
+      currentStage = "db-archive-update";
+      debugLog("UPDATE PATTERN ARCHIVE START");
       const archived = await storage.updatePatternArchive(created.id, true, req.user.userId);
+      debugLog("UPDATE PATTERN ARCHIVE END");
+      currentStage = "complete";
+      debugLog("COMPLETE status=201");
       void trackEvent({ userId: Number(req.user.userId), event: "SVG_EXPORT", page: "/production-edit", metadata: { format: "svg" } });
       if (dxfUrl) void trackEvent({ userId: Number(req.user.userId), event: "DXF_EXPORT", page: "/production-edit", metadata: { format: "dxf" } });
       void trackEvent({ userId: Number(req.user.userId), event: "PDF_EXPORT", page: "/production-edit", metadata: { format: "pdf" } });
       return res.status(201).json(archived);
     } catch (error) {
       if (error instanceof Error && error.message === "LICENSE_REQUIRED") {
+        currentStage = "license-error";
+        logError(`[PRODUCTION-SAVE][${requestId}] error type=LICENSE_REQUIRED message=${error.message} stage=${currentStage} total=${elapsed()}ms`);
         return res.status(403).json({ message: "License required" });
       }
       const message = error instanceof Error ?error.message : String(error);
+      const errorType = error instanceof Error ? error.constructor.name : typeof error;
+      const stack = error instanceof Error ? error.stack ?? error.message : String(error);
+      currentStage = `error:${currentStage}`;
+      logError(
+        `[PRODUCTION-SAVE][${requestId}] error type=${errorType} message=${message} stage=${currentStage} total=${elapsed()}ms stack=${stack}`,
+      );
       return res.status(500).json({ message });
     }
   });

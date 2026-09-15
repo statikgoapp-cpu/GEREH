@@ -1,0 +1,413 @@
+GEREH PDF DOWNLOAD AUDIT
+Tarih: 2026-09-06
+Kapsam: Render production ortaminda PDF download basarisizligi
+
+Kisitlar:
+- Kod dosyalarinda degisiklik yapilmadi.
+- Commit veya push yapilmadi.
+- Yalnizca analiz ve bu TXT raporu olusturuldu.
+- Secret, password, JWT veya token degeri rapora yazilmadi.
+
+1. PDF download frontend'de hangi endpoint'i cagiriyor?
+
+PatternDetails.tsx icinde PDF download icin fetch veya POST /api/export/pdf cagrisi yapilmiyor.
+
+Frontend su sekilde bir link olusturuyor:
+- pattern.svgUrl aliniyor.
+- Uzanti `.svg` ise `.pdf` ile degistiriliyor.
+- Link anchor href olarak kullaniliyor.
+
+Kod mantigi:
+  const pdfDownloadUrl =
+    pattern.svgUrl && pattern.svgUrl.toLowerCase().endsWith(".svg")
+      ? pattern.svgUrl.replace(/\.svg$/i, ".pdf")
+      : null;
+
+Ardindan:
+  <a href={pdfDownloadUrl} download={`pattern-${pattern.id}.pdf`}>PDF</a>
+
+Dolayisiyla PDF butonu su endpoint'e gider:
+  GET /processed/<pattern-filename>.pdf
+
+PDF butonu `/api/export/pdf` endpoint'ini kullanmiyor.
+
+2. PDF download URL'si tam olarak nasil olusuyor?
+
+Ornek:
+- pattern.svgUrl = `/processed/1788615452981-330482626.svg`
+- frontend PDF URL'si = `/processed/1788615452981-330482626.pdf`
+
+Render domain'i ile tam URL:
+  https://gereh-ij6r.onrender.com/processed/1788615452981-330482626.pdf
+
+PatternDetails.tsx PDF linki relative URL kullaniyor. Normal web deployment'ta bu URL dogru host'a gider.
+
+3. server/routes.ts icinde endpoint
+
+server/routes.ts icinde su route var:
+  app.get("/processed/:filename", authenticateToken, serveOwnedFile(PROCESSED_DIR, "/processed"));
+
+Bu route:
+- HTTP method: GET
+- path: /processed/:filename
+- authentication: authenticateToken zorunlu
+- ownership: serveOwnedFile icindeki storage.getPatternByFileUrl kontrolu
+- basarili olursa res.sendFile(...) kullanir
+- sahiplik bulunamazsa 404 `{ message: "File not found" }` doner
+
+4. PDF endpoint PDF'yi nereden donduruyor?
+
+PatternDetails PDF download akisi:
+- PDF response buffer olarak anlik uretilmiyor.
+- `/api/export/pdf` kullanilmiyor.
+- PDF download, daha once image-worker tarafindan local filesystem'e yazilmis PDF dosyasini GET ile almaya calisiyor.
+
+server/image-worker.ts icinde:
+  const outputPdfPath = path.join("public/processed", `${filename}.pdf`);
+
+Sonra:
+  await writePdfFromSvg(finalSvg, outputPdfPath);
+
+writePdfFromSvg:
+- pdfkit yukler.
+- svg-to-pdfkit yukler.
+- SVG'den PDF buffer degil, outputPath'e stream edilen local PDF dosyasi uretir.
+- fs.createWriteStream(outputPath) kullanir.
+
+Sonuc:
+- PDF, image-worker tarafindan `public/processed/<filename>.pdf` dosyasina yazilir.
+- Route daha sonra bu local dosyayi `res.sendFile(path.resolve(PROCESSED_DIR, filename))` ile serve etmeyi hedefler.
+
+5. SVG/DXF download endpointleri ile PDF endpointinin farki
+
+SVG ve DXF de ayni genel route'u kullanir:
+  GET /processed/:filename
+
+Ancak ownership sorgusu server/storage.ts icinde su alanlari kontrol eder:
+- patterns.imageUrl
+- patterns.svgUrl
+- patterns.dxfUrl
+
+SVG icin:
+- pattern.svgUrl = `/processed/<filename>.svg`
+- fileUrl ayni deger oldugu icin ownership sorgusu pattern'i bulur.
+- res.sendFile basarili olur.
+
+DXF icin:
+- pattern.dxfUrl = `/processed/<filename>.dxf`
+- fileUrl ayni deger oldugu icin ownership sorgusu pattern'i bulur.
+- res.sendFile basarili olur.
+
+PDF icin:
+- frontend `/processed/<filename>.pdf` ister.
+- patterns tablosunda pdf_url kolonu yoktur.
+- storage.getPatternByFileUrl() icinde pdf URL kontrolu yoktur.
+- imageUrl, svgUrl ve dxfUrl eslesmez.
+- pattern bulunamaz.
+- route `404 File not found` doner.
+
+Bu, SVG/DXF calisirken PDF'nin neden calismadigini aciklayan kesin farktir.
+
+6. Production Render'da PDF neden basarisiz oluyor?
+
+Birincil ve kesin neden:
+
+PDF dosyasi mevcut olsa bile `/processed/:filename` ownership kontrolu PDF URL'sini pattern metadata'siyle eslestiremiyor.
+
+server/storage.ts:
+  getPatternByFileUrl(fileUrl, userId)
+
+sorgusu su alanlari OR ile kontrol ediyor:
+- eq(patterns.imageUrl, fileUrl)
+- eq(patterns.svgUrl, fileUrl)
+- eq(patterns.dxfUrl, fileUrl)
+
+PDF icin `patterns.pdfUrl` veya `pdf_url` yoktur. Bu nedenle sorgu sonucunda pattern undefined olur ve route 404 doner.
+
+Browser mesajinin "Sitede dosyaya ulasilamadi" seklinde gorunmesi bu 404 response ile uyumludur.
+
+Bu sorun Render'a ozel bir path problemi degildir; local ortamda da ayni kod ve ayni ownership route'u kullaniliyorsa PDF linki ayni nedenle 404 donmelidir. Render'da fark daha gorunur hale gelmistir cunku browser normal download linkini dogrudan production URL'sine gonderir.
+
+7. Kontrol edilen olasiliklar
+
+A. Yanlis dosya yolu
+
+PDF output path'i worker'da ve route'ta ayni mantiksal klasordur:
+- worker: `public/processed/<filename>.pdf`
+- route: `path.resolve(PROCESSED_DIR, filename)` ve PROCESSED_DIR = `public/processed`
+
+Dosya yolu birincil hata degildir.
+
+B. Yanlis filename
+
+Frontend SVG filename'inin sonundaki `.svg` uzantisini `.pdf` yapar. Worker da ayni input filename'den `.pdf` uretir.
+
+Ornek:
+- worker: input filename `abc.png` -> `public/processed/abc.pdf`
+- metadata: svgUrl `/processed/abc.svg`
+- frontend: `/processed/abc.pdf`
+
+Filename donusumu uyumludur.
+
+C. `/processed` URL problemi
+
+URL path yapisi dogru ve SVG/DXF ayni path ile calisiyor. Ancak ownership sorgusu PDF path'ini tanimiyor.
+
+D. authenticateToken / ownership
+
+authenticateToken normal browser isteginde ayni-origin HttpOnly `gereh_token` cookie'sini okuyabilir. Bu nedenle auth mekanizmasi PDF'ye ozel degildir.
+
+Asil sorun authentication degil, authentication sonrasi ownership lookup'tir.
+
+E. Dosyanin olusturulmamasi
+
+image-worker processImageWorker icinde siralama:
+1. SVG yazilir.
+2. DXF yazilir.
+3. PDF writePdfFromSvg ile yazilir.
+4. report varsa yazilir.
+5. worker success mesaji gonderilir.
+
+PDF yazimi throw ederse worker `StageError("pdf", ...)` doner ve pattern processing failed olur. Kullanici processing'i successful goruyor ve SVG/DXF indirebiliyorsa PDF write adimi buyuk olasilikla basariyla tamamlanmistir.
+
+Dolayisiyla mevcut belirtiler PDF'nin olusturulmadigini degil, olusan PDF'nin route ownership sorgusunda reddedildigini gosteriyor.
+
+F. PDF'nin sadece memory buffer olarak olusturulmasi
+
+PatternDetails download akisi icin hayir.
+
+`/api/export/pdf` endpoint'i renderSvgToPdfBuffer() ile memory buffer dondurur; fakat PatternDetails PDF linki bu endpoint'i cagirmaz.
+
+Image-worker PDF akisi `writePdfFromSvg(finalSvg, outputPdfPath)` ile dosyaya yazar.
+
+G. Yanlis HTTP method/path
+
+Frontend:
+- GET /processed/<filename>.pdf
+
+Backend:
+- GET /processed/:filename
+
+Method ve path formati uyumludur. Sorun route icindeki ownership eslesmesidir.
+
+H. Render Linux path farki
+
+Aktif PDF output yolu relative `public/processed` kullanir. SVG/DXF ayni klasorde calistigi icin Linux path farki birincil neden degildir.
+
+I. Python/PyMuPDF subprocess hatasi
+
+`scripts/pdf_asistan.py` ve Python/PyMuPDF sadece input PDF'yi PNG'ye cevirme asamasinda kullanilir.
+
+Bu akis PDF output download dosyasini olusturmaz. PDF output daha sonra Node worker'da pdfkit + svg-to-pdfkit ile uretilir.
+
+Ayni PDF input processing basariliysa Python/PyMuPDF subprocess'i bu vakada birincil neden degildir.
+
+J. Content-Type / Content-Disposition
+
+`/processed/:filename` route'u `res.sendFile` kullandigi icin PDF dosyasi mevcutsa Express uzantiya gore content type ayarlayabilir. Frontend anchor `download` attribute'u kullaniyor.
+
+`/api/export/pdf` endpoint'i ayrica:
+- Content-Type: application/pdf
+- Content-Disposition: attachment; filename="export.pdf"
+
+fakat bu endpoint PatternDetails PDF download tarafindan kullanilmiyor.
+
+K. Frontend'in yanlis PDF URL'si
+
+Frontend'in olusturdugu URL filename acisindan dogru:
+- SVG URL'deki `.svg` son eki `.pdf` olarak degistiriliyor.
+- Worker ayni base filename ile PDF yaziyor.
+
+Frontend linki ownership route'unun PDF'yi tanimamasina takiliyor.
+
+L. Render local filesystem
+
+Render ephemeral filesystem uzun vadeli bir risk tasir. Ancak SVG ve DXF ayni deployment'ta basariyla indirilebildigi icin bu olayda PDF'nin Render filesystem'inde hic bulunmamasi birincil teshis degildir.
+
+Yine de redeploy/restart sonrasi `public/processed` dosyalari kaybolursa tum output download'lari etkilenebilir. Bu ayri bir kalicilik problemidir.
+
+8. Browser network ile backend davranisinin karsilastirilmasi
+
+Beklenen browser request:
+  GET https://gereh-ij6r.onrender.com/processed/<filename>.pdf
+
+Beklenen backend sirasi:
+1. authenticateToken cookie veya Authorization header'i kontrol eder.
+2. serveOwnedFile filename'i alir.
+3. fileUrl = `/processed/<filename>.pdf` olusturur.
+4. storage.getPatternByFileUrl(fileUrl, req.user.userId) cagrilir.
+5. Sorgu imageUrl/svgUrl/dxfUrl alanlarinda arama yapar.
+6. PDF URL'si bu alanlarda bulunmaz.
+7. `404 { message: "File not found" }` doner.
+
+Bu nedenle Browser DevTools Network'te beklenen sonuc:
+- Request Method: GET
+- Status: 404
+- Response: `{ "message": "File not found" }` veya tarayicinin genel dosya erisim mesaji
+
+Eger cookie gonderilmiyorsa once 401 gorulur; fakat ayni origin HttpOnly cookie ile auth calisan SVG/DXF download'lari nedeniyle mevcut ana belirti 404 ownership rejection ile uyumludur.
+
+9. PDF dosyasi processing sirasinda gercekten olusturuluyor mu?
+
+Kod akisi acisindan evet.
+
+server/image-worker.ts:
+- outputPdfPath = `public/processed/${filename}.pdf`
+- `await fsp.mkdir("public/processed", { recursive: true })`
+- `await writePdfFromSvg(finalSvg, outputPdfPath)`
+
+writePdfFromSvg:
+- `fs.createWriteStream(outputPath)` acilir.
+- `svg-to-pdfkit` ile SVG PDF'e yazilir.
+- stream finish oldugunda promise resolve edilir.
+
+Processing success durumunda PDF dosyasinin olusturulmus olmasi beklenir. PDF write adimi fail ederse worker success mesajini gondermez ve pattern status failed olur.
+
+10. Olusuyorsa tam path nedir?
+
+Kodun relative output path'i:
+  public/processed/<filename>.pdf
+
+Server process current working directory'sine gore absolute path:
+  path.resolve(process.cwd(), "public/processed", `${filename}.pdf`)
+
+Worker path'i dogrudan relative kullanir:
+  path.join("public/processed", `${filename}.pdf`)
+
+Render'da normal olarak process.cwd() repository/service working directory'sidir. SVG ve DXF basarili oldugu icin bu klasor akisi calismaktadir.
+
+11. PDF olusmuyorsa neden?
+
+Bu vakadaki belirtilere gore PDF'nin olusmamasi ana neden degildir.
+
+PDF'nin olusmamasina neden olabilecek ayri kod hatalari:
+- pdfkit import/runtime native olmayan dependency resolution hatasi
+- svg-to-pdfkit SVG parse/render hatasi
+- stream write error
+- filesystem permission/disk error
+- worker memory/time limiti
+
+Bu hatalardan biri olursa worker StageError("pdf", ...) uretir ve processing status failed olmalidir. Kullanici pattern processing'i successful bildirirken SVG/DXF alabiliyorsa, once ownership lookup kontrol edilmelidir.
+
+12. SVG/DXF calisirken PDF neden farkli davraniyor?
+
+SVG ve DXF metadata'da alan olarak saklanir:
+- svg_url
+- dxf_url
+
+storage.getPatternByFileUrl() bu iki alanla eslesir.
+
+PDF dosyasi fiziksel olarak olusturulsa da patterns tablosunda:
+- pdf_url kolonu yoktur.
+- Pattern schema'da pdfUrl alani yoktur.
+- storage ownership sorgusunda PDF URL'si yoktur.
+
+PDF frontend'de sonradan SVG URL'sinden turetilir; backend ownership sorgusu bu turetilmis URL'yi bilmiyor.
+
+Karsilastirma:
+- SVG: URL -> svgUrl metadata -> ownership match -> 200
+- DXF: URL -> dxfUrl metadata -> ownership match -> 200
+- PDF: URL -> sadece frontend string transform -> metadata'da karsiligi yok -> 404
+
+13. Sorun Render'a ozel mi?
+
+Ana bug Render'a ozel degildir.
+
+Ayni route ve storage kodu local ortamda da kullaniliyorsa, PDF URL'si `/processed/...pdf` ownership sorgusunda bulunamayacagi icin ayni 404 gorulmelidir.
+
+Render'a ozel olabilecek ikincil riskler:
+- ephemeral filesystem ile dosyalar restart/redeploy sonrasi kaybolabilir.
+- Render Linux'ta native dependency veya memory/time sinirlari PDF worker'ini etkileyebilir.
+- Browser cookie/domain davranisi host farki nedeniyle incelenmelidir.
+
+Fakat SVG/DXF ayni Render ortaminda basarili oldugu icin bu olayda birincil ve kesin neden ownership URL eslesmesidir.
+
+14. En kucuk ve guvenli cozum
+
+En kucuk cozum:
+- `server/storage.ts` icindeki `getPatternByFileUrl()` ownership sorgusuna PDF filename eslesmesi eklemek.
+- PDF URL'si metadata'da tutulmadigi icin mevcut `svgUrl` veya `dxfUrl` degerinin `.pdf` uzantili esdegerini sorguda karsilastirmak.
+
+Alternatif daha acik cozum:
+- schema'ya pdfUrl/pdf_url alani eklemek.
+- worker success metadata'sina pdfUrl eklemek.
+- storage ve route ownership kontrolune pdfUrl eklemek.
+- Bu daha buyuk migration ve birden fazla dosya degisikligi gerektirir.
+
+Mevcut veri modeli ve frontend ile en az degisiklikli cozum server/storage.ts'te fileUrl'in `.pdf` oldugu durumda ayni base adin svgUrl/dxfUrl karsiligini sahiplik icin kabul etmektir.
+
+Bu cozum PDF dosyasini public yapmaz; yine userId ownership kontrolu devam eder.
+
+Ek olarak download linklerini `/api` endpoint'ine tasimak gerekmez. Mevcut cookie tabanli auth ayni-origin anchor isteginde calisabilir.
+
+15. Cozum icin hangi dosyalar degistirilmeli?
+
+Minimum:
+- server/storage.ts
+
+Gerekirse test kapsaminda:
+- server/storage.ts icin ownership/file URL testi eklenebilir; ancak mevcut talep icin minimum runtime degisikligi storage.ts'tir.
+
+Değişmesi gerekmeyen dosyalar:
+- client/src/pages/PatternDetails.tsx: URL base filename acisindan dogru.
+- client/src/pages/Home.tsx: PDF download akisini kontrol etmiyor.
+- client/src/pages/NewPattern.tsx: PDF DPI upload processing ayaridir, download degildir.
+- client/src/hooks/use-patterns.ts: pattern query/mutation akisidir, PDF anchor download degildir.
+- client/src/lib/queryClient.ts: PDF anchor istegini yonetmez.
+- server/routes.ts: route path ve sendFile akisi genel olarak dogru; ownership sorgusu asagidaki storage katmaninda.
+- server/image-worker.ts: PDF output path ve write akisi mevcut; processing basariliysa dosya olusur.
+- scripts/pdf_asistan.py: input PDF -> PNG donusumudur; output PDF download sorununun kaynagi degildir.
+
+16. /api/export/pdf hakkinda not
+
+server/routes.ts icinde ayri bir endpoint vardir:
+  POST /api/export/pdf
+
+Bu endpoint:
+- authenticateToken ister.
+- request body'den SVG text alir.
+- renderSvgToPdfBuffer(svg) ile memory buffer olusturur.
+- Content-Type application/pdf ayarlar.
+- Content-Disposition attachment export.pdf ayarlar.
+- response olarak buffer gonderir.
+
+Ancak PatternDetails PDF download butonu bu endpoint'i cagirmadigi icin mevcut sorunu bu endpoint uzerinden aramak yanlis olur.
+
+========================
+KESİN TEŞHİS
+========================
+
+HATA NEDENİ:
+
+PDF download linki `/processed/<filename>.pdf` adresine dogru gidiyor ve PDF worker tarafindan `public/processed/<filename>.pdf` dosyasina yaziliyor. Ancak server/storage.ts icindeki `getPatternByFileUrl()` ownership sorgusu yalnizca imageUrl, svgUrl ve dxfUrl alanlarini kontrol ediyor. PDF URL'si bu alanlardan hicbirinde bulunmadigi icin `/processed/:filename` route'u pattern'i bulamiyor ve 404 `File not found` donuyor. Browser'daki dosyaya ulasilamadi mesaji bu 404 ile uyumludur.
+
+PDF DOSYASI OLUŞUYOR MU:
+
+Evet, processing successful ise olusmasi bekleniyor. image-worker.ts outputPdfPath olarak `public/processed/<filename>.pdf` kullaniyor ve `writePdfFromSvg(finalSvg, outputPdfPath)` ile pdfkit + svg-to-pdfkit uzerinden dosyaya yaziyor. PDF write basarisiz olsaydi worker processing status'ünü failed yapmasi beklenirdi. SVG ve DXF'nin basarili olmasi ile birlikte belirtiler PDF'nin olustugunu fakat route tarafinda reddedildigini gosteriyor.
+
+PDF DOWNLOAD ENDPOINT:
+
+Frontend'de dogrudan:
+  GET /processed/<filename>.pdf
+
+Backend route:
+  app.get("/processed/:filename", authenticateToken, serveOwnedFile(PROCESSED_DIR, "/processed"))
+
+PatternDetails PDF butonu `/api/export/pdf` endpoint'ini kullanmiyor.
+
+SVG/DXF'DEN FARKI:
+
+SVG ve DXF URL'leri patterns.svgUrl ve patterns.dxfUrl alanlarinda saklaniyor ve ownership sorgusu bu alanlari kontrol ediyor. PDF URL'si frontend'de svgUrl string'inden turetiliyor; schema'da pdf_url/pdfUrl alani ve storage ownership sorgusunda PDF eslesmesi bulunmuyor. Bu nedenle SVG/DXF 200 olurken PDF 404 oluyor.
+
+GEREKLİ DEĞİŞİKLİK:
+
+En kucuk ve guvenli degisiklik server/storage.ts icindeki `getPatternByFileUrl()` ownership kontrolunun `.pdf` URL'sini ayni pattern'in `.svg` veya `.dxf` output esdegeriyle eslestirmesidir. UserId kontrolu ve `/processed` route'u korunmalidir. Yeni public endpoint acilmasina gerek yoktur.
+
+DEĞİŞTİRİLMESİ GEREKEN DOSYA:
+
+Minimum olarak:
+  server/storage.ts
+
+Frontend, image-worker, scripts/pdf_asistan.py ve routes.ts bu spesifik 404 ownership hatasi icin degistirilmek zorunda degildir.
+
+RAPOR SONU

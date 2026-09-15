@@ -284,6 +284,138 @@ function buildOccupancyMap(
   return occupied;
 }
 
+function addStoneToOccupancy(
+  stone: Stone,
+  occupied: Set<number>,
+  width: number,
+  height: number
+) {
+  const r = Math.ceil(stone.radius);
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      if (dx * dx + dy * dy > stone.radius * stone.radius) continue;
+      const px = Math.round(stone.x + dx);
+      const py = Math.round(stone.y + dy);
+      if (px >= 0 && px < width && py >= 0 && py < height) {
+        occupied.add(py * width + px);
+      }
+    }
+  }
+}
+
+function isStoneInsideMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius: number
+): boolean {
+  const sampleRadii = [0, radius * 0.55, radius * 0.82, radius];
+  const sampleCount = 16;
+
+  for (const sampleRadius of sampleRadii) {
+    for (let i = 0; i < sampleCount; i++) {
+      const angle = (i / sampleCount) * Math.PI * 2;
+      const px = Math.round(x + Math.cos(angle) * sampleRadius);
+      const py = Math.round(y + Math.sin(angle) * sampleRadius);
+      if (px < 0 || px >= width || py < 0 || py >= height || !mask[py * width + px]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+function isStoneCollisionFree(
+  occupied: Set<number>,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius: number,
+  clearance: number
+): boolean {
+  const checkRadius = Math.ceil(radius + clearance);
+  for (let dy = -checkRadius; dy <= checkRadius; dy++) {
+    for (let dx = -checkRadius; dx <= checkRadius; dx++) {
+      if (dx * dx + dy * dy > (radius + clearance) ** 2) continue;
+      const px = Math.round(x + dx);
+      const py = Math.round(y + dy);
+      if (px >= 0 && px < width && py >= 0 && py < height && occupied.has(py * width + px)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function fillGaps(
+  imageData: ImageData,
+  mask: Uint8Array,
+  dist: Float32Array,
+  existingStones: Stone[],
+  radiusPx: number,
+  spacing: number,
+  density: number,
+  scale: number
+): Stone[] {
+  const { width, height } = imageData;
+  const occupied = buildOccupancyMap(existingStones, width, height);
+  const gridSpacingX = radiusPx * 2 + spacing * scale;
+  const gridSpacingY = gridSpacingX * (Math.sqrt(3) / 2);
+  const clearance = Math.max(0, spacing * scale * 0.1);
+  const edgeThreshold = radiusPx * Math.max(0.35, density * 0.75);
+  const phases = [
+    [0, 0],
+    [gridSpacingX * 0.5, gridSpacingY * 0.5],
+    [gridSpacingX * 0.25, gridSpacingY * 0.5],
+    [gridSpacingX * 0.75, gridSpacingY * 0.5],
+  ];
+  const candidates: Array<{ x: number; y: number; score: number }> = [];
+  const maxCandidates = 24000;
+  const phaseCandidateBudget = Math.ceil(maxCandidates / phases.length);
+
+  for (const [phaseX, phaseY] of phases) {
+    let phaseCandidateCount = 0;
+    for (let row = -1; row * gridSpacingY + phaseY < height + radiusPx; row++) {
+      const rowOffset = row % 2 === 0 ? 0 : gridSpacingX / 2;
+      for (let col = -1; col * gridSpacingX + phaseX - rowOffset < width + radiusPx; col++) {
+        const x = col * gridSpacingX + phaseX - rowOffset + radiusPx;
+        const y = row * gridSpacingY + phaseY + radiusPx;
+        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+        const px = Math.round(x);
+        const py = Math.round(y);
+        if (!mask[py * width + px] || dist[py * width + px] < edgeThreshold) continue;
+        candidates.push({ x, y, score: dist[py * width + px] });
+        phaseCandidateCount++;
+        if (phaseCandidateCount >= phaseCandidateBudget) break;
+      }
+      if (phaseCandidateCount >= phaseCandidateBudget) break;
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  const added: Stone[] = [];
+  for (const candidate of candidates) {
+    if (!isStoneInsideMask(mask, width, height, candidate.x, candidate.y, radiusPx)) continue;
+    if (!isStoneCollisionFree(occupied, width, height, candidate.x, candidate.y, radiusPx, clearance)) continue;
+
+    const stone: Stone = {
+      x: candidate.x,
+      y: candidate.y,
+      radius: radiusPx,
+      ssSize: ssLabel(radiusPx, scale),
+      color: sampleColor(imageData, candidate.x, candidate.y),
+    };
+    added.push(stone);
+    addStoneToOccupancy(stone, occupied, width, height);
+  }
+
+  return added;
+}
+
 function buildSmallStoneMask(
   mask: Uint8Array,
   occupied: Set<number>,
@@ -337,8 +469,12 @@ export async function generateRhinestonePattern(
         imageData, mask, dist, largeRadius,
         options.spacing, options.density, scale
       );
+      const filledLargeStones = [
+        ...largeStones,
+        ...fillGaps(imageData, mask, dist, largeStones, largeRadius, options.spacing, options.density, scale),
+      ];
 
-      const occupied = buildOccupancyMap(largeStones, width, height);
+      const occupied = buildOccupancyMap(filledLargeStones, width, height);
       const smallMask = buildSmallStoneMask(mask, occupied, width, height);
       const smallDist = distanceTransform(smallMask, width, height);
       const smallRadius = (sortedSizes[sortedSizes.length - 1] / 2) * scale;
@@ -346,15 +482,31 @@ export async function generateRhinestonePattern(
         imageData, smallMask, smallDist, smallRadius,
         options.spacing, options.density, scale
       );
+      const filledSmallStones = [
+        ...smallStones,
+        ...fillGaps(
+          imageData,
+          smallMask,
+          smallDist,
+          [...filledLargeStones, ...smallStones],
+          smallRadius,
+          options.spacing,
+          options.density,
+          scale,
+        ),
+      ];
 
-      allStones.push(...largeStones, ...smallStones);
+      allStones.push(...filledLargeStones, ...filledSmallStones);
     } else {
       const radius = (sortedSizes[0] / 2) * scale;
       const stones = placeStones(
         imageData, mask, dist, radius,
         options.spacing, options.density, scale
       );
-      allStones.push(...stones);
+      allStones.push(
+        ...stones,
+        ...fillGaps(imageData, mask, dist, stones, radius, options.spacing, options.density, scale),
+      );
     }
   }
 

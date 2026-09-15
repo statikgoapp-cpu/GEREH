@@ -1,0 +1,292 @@
+GEREH REGISTER 500 AUDIT
+Tarih: 2026-09-06
+Kapsam: Render production ortaminda POST /api/auth/register 500 Internal Server Error teshisi
+
+Kisitlar:
+- Kod dosyalarinda degisiklik yapilmadi.
+- Commit veya push yapilmadi.
+- Secret, JWT, password veya token degeri rapora yazilmadi.
+- Bu rapor salt-okunur kod incelemesine dayanir.
+
+1. POST /api/auth/register hangi route tarafindan karsilaniyor?
+
+server/routes.ts icinde:
+  app.use("/api/auth", authRouter);
+
+server/auth.ts icinde:
+  authRouter.post("/register", async (req, res) => { ... });
+
+Sonuc olarak su istek:
+  POST /api/auth/register
+
+server/auth.ts icindeki authRouter.post("/register") route'u tarafindan karsilanir.
+
+Bu route, global production lisans middleware'inden sonra calisir. NP_LICENSE_ALLOWED=1 ise registration route'una ulasir. Health endpoint'in 200 donmesi auth route'unun calistigini kanitlamaz; health ayri bir endpoint'tir.
+
+2. Registration sirasinda hangi DB sorgulari calisiyor?
+
+server/auth.ts icindeki registration akisi:
+
+A. Zorunlu request body alanlari kontrol edilir:
+- email
+- password
+- name
+
+B. Email'in kullanilip kullanilmadigi kontrol edilir:
+  db.select()
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1)
+
+Bu sorgu SQL olarak yaklasik su anlama gelir:
+  SELECT ... FROM users WHERE email = ? LIMIT 1;
+
+C. Sifre bcrypt ile hash'lenir.
+
+D. Kullanici insert edilir:
+  db.insert(users).values({
+    email,
+    passwordHash,
+    name,
+    role: "user",
+  }).returning();
+
+Bu sorgu SQL olarak users tablosuna yeni satir ekler ve geri dondurur.
+
+E. JWT token uretilir ve response'a safe user ile token konur.
+
+Render'daki mevcut 500 hatasi icin ilk patlayan DB islemi B adimindaki users SELECT sorgusudur. Users tablosu yoksa insert adimina ulasilmaz.
+
+3. users tablosu hangi dosyada tanimlaniyor?
+
+users tablosunun Drizzle schema tanimi:
+  shared/schema.ts
+
+Tanimi:
+  export const users = sqliteTable("users", { ... });
+
+Users kolonlari:
+- id: INTEGER PRIMARY KEY AUTOINCREMENT
+- email: TEXT NOT NULL UNIQUE
+- password_hash: TEXT NOT NULL
+- name: TEXT NOT NULL
+- role: TEXT NOT NULL DEFAULT 'user'
+- plan: TEXT NOT NULL DEFAULT 'free'
+- status: TEXT NOT NULL DEFAULT 'active'
+- created_at: TEXT NOT NULL DEFAULT ...
+- updated_at: TEXT NOT NULL DEFAULT ...
+
+Bu dosya tabloyu fiziksel olarak olusturmaz; sadece Drizzle/TypeScript schema'sini tanimlar.
+
+4. users tablosunu production startup sirasinda hangi kod olusturuyor?
+
+Mevcut server production startup akisinda users tablosunu olusturan kod yoktur.
+
+server/index.ts:
+- dotenv yukler
+- Express ve HTTP server olusturur
+- Socket.IO baslatir
+- registerRoutes(...) cagirir
+- production'da serveStatic(...) cagirir
+- HTTP server'i dinlemeye baslar
+
+server/db.ts:
+- neural.db dosyasini acar/olusturur
+- ensurePatternsTable() ile patterns tablosunu olusturur
+- ensurePatternsColumns() ile patterns kolonlarini kontrol eder
+- users tablosunu olusturmaz
+
+server/init-sqlite.ts de yalnizca patterns tablosu olusturur; users tablosunu da olusturmaz. Ayrica normal npm start/server/index.ts akisinda bu dosyanin otomatik calistirildigine dair baglanti yoktur.
+
+Sonuc: production startup'ta users tablosu CREATE TABLE IF NOT EXISTS SQL'i calistirilmiyor.
+
+5. Render'daki mevcut neural.db ilk acilista users tablosunu olusturuyor mu?
+
+Hayir.
+
+server/db.ts su kod mantigini uygular:
+1. process.cwd()/neural.db dosyasini acar.
+2. ensurePatternsTable() ile yalnizca patterns tablosunu CREATE TABLE IF NOT EXISTS ile olusturur.
+3. ensurePatternsColumns() ile patterns kolonlarini ekler.
+4. users tablosuna CREATE TABLE uygulamaz.
+
+Render'da neural.db yoksa better-sqlite3 yeni bos bir SQLite dosyasi olusturur. Sonra patterns tablosu olusturulur; users tablosu olusturulmadan kalir.
+
+Render'daki mevcut neural.db daha once baska bir ortamdan kopyalanmadiysa veya manuel migration uygulanmadiysa users tablosunun bulunmamasi beklenen sonucudur.
+
+6. users tablosu yoksa registration hangi SQL hatasini uretir?
+
+Ilk registration DB sorgusunda:
+  SELECT ... FROM users WHERE email = ? LIMIT 1
+
+SQLite'in beklenen hatasi:
+  SqliteError: no such table: users
+
+Bazi runtime/log formatlarinda su sekilde gorunebilir:
+  no such table: users
+
+Hatanin teknik nedeni users tablosunun mevcut SQLite dosyasinda bulunmamasidir. Bu bir JWT, bcrypt, password validation veya Render HTTP route hatasi degildir.
+
+7. Registration sirasinda baska hangi tablo/kolonlar zorunlu?
+
+Registration'in DB acisindan zorunlu tablosu:
+- users
+
+Ilk SELECT icin fiilen gerekli kolon:
+- users.email
+
+Insert asamasina ulasilirsa zorunlu kolonlar:
+- email
+- password_hash
+- name
+
+Su alanlar schema'da default ile tanimlidir ve insert kodu bunlari vermese de SQLite default uygulayabilir:
+- role -> user
+- plan -> free
+- status -> active
+- created_at -> default
+- updated_at -> default
+
+id auto increment'tir.
+
+Registration sirasinda patterns tablosuna sorgu yapilmaz. patterns tablosu login/register icin zorunlu degildir.
+
+Ancak server/db.ts icinde patterns tablosu startup'ta olusturulmaya devam eder; bu, users eksikligi sorununu cozmez.
+
+8. SQLite production'da CREATE TABLE yapilmadan users sorgulaniyor mu?
+
+Evet.
+
+SQLite production startup akisi:
+- neural.db acilir/olusturulur.
+- patterns tablosu ensure edilir.
+- users tablosu ensure edilmez.
+- kullanici registration istegi gelir.
+- auth.ts users SELECT sorgusunu calistirir.
+- SQLite users tablosunu bulamaz.
+
+Dolayisiyla users sorgusu, users icin herhangi bir CREATE TABLE yapilmadan calistirilmaktadir.
+
+9. Hata nedeniyle Express error middleware'e dusen gercek exception nedir?
+
+Mevcut kodda registration hatasi Express error middleware'e dusmez.
+
+Nedeni server/auth.ts icindeki route'un kendi try/catch blogudur:
+- DB hatasi catch(error) tarafindan yakalanir.
+- console.error("Register Error:", error) ile loglanir.
+- response 500 olarak su generic body ile doner:
+  { error: "Kayit islemi sirasinda bir hata olustu." }
+
+Beklenen yakalanan gerçek exception:
+  SqliteError: no such table: users
+
+server/index.ts icindeki Express error middleware sadece next(error) veya yakalanmamis Express route hatalari icin devreye girer. Bu registration exception'i auth.ts icinde yakalandigi icin o middleware'e ulasmaz.
+
+Sonuc:
+- Render response'unda gorulen 500 generic auth error'dur.
+- Gercek SQLite exception Render service loglarinda "Register Error" satirinin yaninda gorulmelidir.
+- Express error middleware'in logladigi exception oldugu varsayilmamalidir.
+
+10. Problem neden sadece Render'da ortaya cikiyor?
+
+Yerel ortamda daha once registration basarili olduysa, yerel neural.db dosyasi users tablosunu zaten iceriyor olabilir. Bu tablo daha once elle, baska migration, eski uygulama versiyonu veya daha once calisan bir setup tarafindan olusturulmus olabilir.
+
+Render'da ise:
+- yeni service veya yeni instance bos bir filesystem/database ile baslayabilir.
+- server/db.ts yeni neural.db dosyasi olusturur.
+- patterns tablosu olusturulur.
+- users tablosu olusturulmaz.
+- ilk registration users SELECT sirasinda 500 verir.
+
+Health endpoint'in basarili olmasi bu durumu gizler cunku /api/health:
+  storage.listPatterns(0)
+
+cagrisini yapar. Bu cagri patterns tablosunu kullanir; users tablosuna dokunmaz.
+
+Bu nedenle:
+- /api/health -> 200
+- /api/auth/register -> 500
+
+sonuclari ayni anda gorulebilir.
+
+Ayrica Render filesystem'i ephemeral ise restart/redeploy sonrasi neural.db yeniden bosalabilir veya kaybolabilir. Elle bir kez tablo olusturmak kalici ve guvenli cozum degildir.
+
+11. En kucuk ve guvenli cozum nedir?
+
+Mevcut SQLite mimarisini degistirmeden en kucuk guvenli kod cozumu:
+- users tablosunu da startup schema initialization sirasinda CREATE TABLE IF NOT EXISTS ile olusturmak.
+- Bu CREATE islemini patterns tablosu ensure edilmeden/edildikten once server/db.ts icine eklemek.
+- users tablosu icin shared/schema.ts ile ayni tablo adlarini, kolon adlarini, NOT NULL, UNIQUE ve default kurallarini kullanmak.
+- Startup'ta users ve patterns schema'sinin ikisini de ensure etmek.
+
+En dogru dosya:
+  server/db.ts
+
+Bu cozum register SELECT ve INSERT islemlerinin yeni Render neural.db uzerinde calismasini saglar.
+
+Ancak bu sadece mevcut users tablosu eksikligi olan 500 hatasini cozer. Render ephemeral filesystem nedeniyle kullanici verisinin restart/redeploy sonrasi kaybolma riskini cozmeyecektir.
+
+Kalici production cozum:
+- PostgreSQL runtime'a gecmek veya
+- en azindan SQLite + Render persistent disk + backup kullanmak.
+
+Sadece Render'a DATABASE_URL eklemek bu sorunu cozmez; cunku server/db.ts DATABASE_URL okumuyor ve better-sqlite3 ile neural.db aciyor.
+
+12. Cozum icin hangi dosyada hangi degisiklik gereklidir?
+
+Bu spesifik 500 hatasinin minimum kod degisikligi:
+
+Dosya:
+  server/db.ts
+
+Gerekli degisiklik:
+- users tablosu icin CREATE TABLE IF NOT EXISTS ensure fonksiyonu eklemek veya mevcut schema initialization bloguna users CREATE TABLE SQL'i eklemek.
+- Bu ensure fonksiyonunu startup'ta, export const db = drizzle(sqlite, { schema }) satirindan once calistirmak.
+- Kolonlarin shared/schema.ts ile birebir uyumlu olmasini saglamak.
+- email UNIQUE ve zorunlu NOT NULL kolonlarini korumak.
+
+Olasi daha duzenli minimal yapi:
+- ensureUsersTable()
+- ensurePatternsTable()
+- ensurePatternsColumns()
+
+ve startup'ta bu siranin calistirilmasi.
+
+Bu spesifik hata icin zorunlu olmayan dosyalar:
+- server/routes.ts: route baglantisi zaten dogru.
+- server/auth.ts: sorgu route'u ve hata yakalama mantigi dogru; tablo eksikligi burada degil.
+- server/storage.ts: registration'in users sorgusunu yapmiyor.
+- shared/schema.ts: users tablosu zaten tanimli; fiziksel CREATE eksigi burada degil.
+- server/index.ts: startup db import akisi zaten server/db.ts'yi yukluyor.
+
+SONUÇ:
+
+HATANIN KESİN NEDENİ
+
+Render production'da kullanilan neural.db icinde users tablosu yoktur. server/db.ts startup sirasinda yalnizca patterns tablosunu olusturur; users tablosunu olusturmaz. POST /api/auth/register ilk olarak users tablosunda email SELECT yaptigi icin SQLite `no such table: users` hatasi uretilir ve route 500 doner. /api/health'in 200 olmasi normaldir cunku health yalnizca patterns tablosunu sorgular.
+
+GERÇEK EXCEPTION
+
+  SqliteError: no such table: users
+
+Bu exception server/auth.ts icindeki register try/catch tarafindan yakalanir; Express global error middleware'e dusmez. Render response'unda generic kayit hatasi gorulur, asil exception service logunda "Register Error" ile gorulur.
+
+GEREKLİ DOSYA
+
+  server/db.ts
+
+GEREKLİ DEĞİŞİKLİK
+
+  Production startup'ta users tablosunu shared/schema.ts ile uyumlu kolonlar, NOT NULL, UNIQUE ve default degerlerle `CREATE TABLE IF NOT EXISTS` kullanarak olusturmak ve bu ensure islemini db export edilmeden once calistirmak.
+
+BAŞKA BİR ŞEYE DOKUNMAYA GEREK VAR MI?
+
+Bu spesifik Render registration 500 hatasini gidermek icin minimum olarak hayir. server/routes.ts, server/auth.ts, server/storage.ts ve shared/schema.ts route/sorgu/schema tanimi acisindan bu hatanin kaynagi degildir.
+
+Fakat uzun vadeli Render production guvenilirligi icin ayri konular vardir:
+- SQLite verisini persistent disk veya PostgreSQL ile kalici hale getirmek.
+- uploads ve processed dosyalarini kalici storage'a tasimak.
+- migration stratejisi eklemek.
+- Bunlar mevcut `no such table: users` hatasini teshis eden minimal degisikligin disindadir.
+
+RAPOR SONU

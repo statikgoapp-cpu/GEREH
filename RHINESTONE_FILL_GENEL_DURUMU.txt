@@ -1,0 +1,610 @@
+GEREH RHINESTONE FILL SISTEMI
+GENEL DURUM, MIMARI VE CALISMA ANALIZI
+
+Tarih: 14.09.2026
+
+============================================================
+1. GENEL DURUM
+============================================================
+
+Projede rhinestone ile ilgili iki farkli sistem bulunmaktadir:
+
+1. RhinestoneFill ekrani:
+   - Kullanici tarafinda, tarayici icinde calisir.
+   - Bir raster gorseli renk bolgelerine ayirir.
+   - Renk bolgelerinin icine otomatik rhinestone tasi yerlestirir.
+   - SVG, DXF ve PLT ciktilari uretir.
+   - Sonucu Dashboard'a otomatik olarak kaydeder.
+
+2. Sunucu tarafindaki rhinestone detection sistemi:
+   - Yuklenen gorsel icindeki mevcut rhinestone dairelerini algilar.
+   - Goruntu isleme, daire tespiti, kalibrasyon ve uretim toleransi kontrolleri uygular.
+   - server/image-worker.ts icinde calisir.
+   - /api/patterns uzerinden yuklenen rhinestone ve hybrid kategorilerinde kullanilir.
+
+Bu iki sistem ayni kavramla ilgili olsa da ayni algoritma degildir.
+RhinestoneFill yeni tas yerlesimi ve alan doldurma islemi yapar.
+Sunucu worker'i ise gorselde zaten bulunan taslari tespit etmeye odaklanir.
+
+============================================================
+2. RHINESTONE FILL EKRANI
+============================================================
+
+Ana dosya:
+client/src/pages/RhinestoneFill.tsx
+
+Temel calisma zinciri:
+
+Gorsel sec
+  -> Gorseli tarayiciya yukle
+  -> Gorseli maksimum 600 px boyutuna indir
+  -> ImageData olustur
+  -> Renk kumelerini cikar
+  -> Her renk icin maske olustur
+  -> Hexagonal grid uzerinde tas yerlestir
+  -> Tas cakismalarini temizle
+  -> Canvas onizlemesi goster
+  -> SVG / DXF / PLT uret
+  -> Sonucu sunucuya otomatik kaydet
+
+RhinestoneFill isleminin ana motoru:
+client/src/components/rhinestone-fill-engine.ts
+
+============================================================
+3. GORSEL HAZIRLAMA
+============================================================
+
+prepareImageData() fonksiyonu secilen gorseli canvas uzerine cizer.
+
+Onemli davranislar:
+
+- Gorselin en uzun kenari maksimum 600 px olacak sekilde kucultulur.
+- Gorsel orani korunur.
+- Islenecek veri ImageData formatina cevrilir.
+- Alpha degeri 10'dan kucuk pikseller islem disinda birakilir.
+
+Bu yaklasim tarayicida performansi korur. Ancak buyuk veya cok detayli
+cizimlerde kaynak gorselin cozunurlugu azalabilir.
+
+============================================================
+4. RENK ANALIZI
+============================================================
+
+Motor, gorseli renk bolgelerine ayirmak icin k-means benzeri bir
+renk kumelendirme algoritmasi kullanir.
+
+Varsayilan renk bolgesi sayisi:
+numColors = 5
+
+Kullanici arayuzunde bu deger 2 ile 8 arasinda ayarlanabilir.
+
+Renk analizinin adimlari:
+
+- Gorselden pikseller orneklenir.
+- Baslangic renk merkezleri secilir.
+- Her piksel en yakin renk merkezine atanir.
+- Her grubun ortalama rengi yeniden hesaplanir.
+- Islem en fazla 20 iterasyona kadar tekrarlanir.
+
+Renk mesafesi dogrudan RGB uzerinden hesaplanmaz. RGB once yaklasik
+CIE Lab renk uzayina donusturulur ve renk mesafesi Lab degerleriyle
+hesaplanir. Bu, insan gozunun algiladigi renklere RGB mesafesinden
+daha yakin sonuclar verebilir.
+
+Teknik sinirlama:
+Piksel atamalari Lab mesafesiyle yapilirken yeni centroid ortalamalari
+RGB uzayinda hesaplanmaktadir. Bu nedenle tam anlamiyla Lab-space
+k-means degildir; hizli ve pratik bir yaklasimdir.
+
+============================================================
+5. RENK MASKELERI VE ALAN SINIRLARI
+============================================================
+
+Her renk centroid'i icin ayri bir binary mask olusturulur.
+
+Maskede:
+
+- 1: Piksel ilgili renk grubuna aittir.
+- 0: Piksel ilgili renk grubuna ait degildir.
+
+Her maske icin distance transform hesaplanir. Amac, renk alaninin
+kenarlarina fazla yakin tas yerlestirmemektir.
+
+Bu sayede:
+
+- Tas merkezleri alanin icinde tutulmaya calisilir.
+- Kenara yakin taslar azaltlir.
+- Taslarin renk bolgesinin disina cikmasi engellenmeye calisilir.
+
+Kullanilan distance transform iki gecisli yaklasik bir mesafe hesabidir.
+Tam geometrik Oklid mesafesi olmadigi icin capraz kenarlarda kucuk
+farkliliklar olusabilir.
+
+============================================================
+6. TAS YERLESTIRME SISTEMI
+============================================================
+
+Taslar placeStones() fonksiyonu tarafindan yerlestirilir.
+
+Varsayilan grid tipi:
+hex
+
+Hexagonal grid duzeninde siralar birbirine gore yatay olarak kaydirilir:
+
+Tek satir:   o   o   o   o
+Cift satir:    o   o   o   o
+
+Bir tasin kabul edilmesi icin:
+
+- Tas merkezi gorsel sinirlari icinde olmalidir.
+- Tas merkezi ilgili renk maskesinde bulunmalidir.
+- Merkez, alan kenarindan yeterli uzaklikta olmalidir.
+
+Tas araligi ve yogunluk degerleri, grid mesafesini ve kenar guvenlik
+esigini etkiler.
+
+============================================================
+7. KULLANICI KONTROLLERI
+============================================================
+
+Kontrol dosyasi:
+client/src/components/ControlPanel.tsx
+
+7.1 Tas boyutlari
+
+Desteklenen boyutlar:
+
+- SS2  = 0.7 mm
+- SS4  = 1.2 mm
+- SS6  = 2.0 mm
+- SS10 = 3.0 mm
+- SS16 = 4.0 mm
+- SS20 = 5.0 mm
+- SS30 = 6.5 mm
+
+Varsayilan secim:
+SS2 ve SS4
+
+Kullanici birden fazla tas boyutunu secebilir.
+
+7.2 Yogunluk
+
+Varsayilan:
+0.85
+
+Aralik:
+0.40 - 1.00
+
+Bu deger, taslarin alan icine ne kadar sik yerlestirilecegini ve
+kenara ne kadar yaklasabileceklerini etkiler.
+
+7.3 Tas araligi
+
+Varsayilan:
+0.3 mm
+
+Aralik:
+0.1 - 1.0 mm
+
+Grid uzerindeki yatay ve dikey mesafeyi artirir veya azaltir.
+
+7.4 Renk bolgesi sayisi
+
+Varsayilan:
+5
+
+Aralik:
+2 - 8
+
+Deger arttikca renkler daha fazla gruba ayrilir. Ancak cok fazla grup,
+renk gürültüsünü ve gereksiz bolunmeleri de artirabilir.
+
+7.5 Multi-size fill
+
+Varsayilan olarak aktiftir.
+
+Calisma sirasi:
+
+1. Buyuk secilen taslarla alan doldurulur.
+2. Buyuk taslarin kapladigi pikseller occupancy map'e yazilir.
+3. Bos kalan pikseller icin yeni maske olusturulur.
+4. Kucuk taslarla kalan bosluklar doldurulur.
+
+Bu yontem, buyuk taslar arasinda kalan bosluklari tamamlamaya calisir.
+
+7.6 Tas stili
+
+Iki gorunum vardir:
+
+- Filled: Dolu, gradient etkili taslar.
+- Outline: Yalnizca renkli daire konturlari.
+
+Bu secim onizlemeyi ve SVG ciktisini etkiler.
+
+============================================================
+8. TAS CAKISMA TEMIZLEME
+============================================================
+
+Ilk tas yerlestirme isleminden sonra removeCollisions() fonksiyonu
+calisir.
+
+- Taslar yaricaplarina gore siralanir.
+- Buyuk taslar once degerlendirilir.
+- Yeni tas, kabul edilmis taslarla karsilastirilir.
+- Merkezler arasi mesafe yetersizse yeni tas reddedilir.
+
+Bu sayede taslarin ust uste binmesi azaltilir.
+
+Sinirlama:
+Bu algoritma global optimizasyon yapmaz. Once kabul edilen buyuk taslar
+onceliklidir. Bazi alanlarda matematiksel olarak daha fazla tas sigmasi
+mumkun olsa bile mevcut siralama daha az tas uretebilir.
+
+============================================================
+9. ONIZLEME SISTEMI
+============================================================
+
+Onizleme dosyasi:
+client/src/components/PatternCanvas.tsx
+
+Canvas boyutu, islenmis gorsel boyutuna gore ayarlanir.
+
+Filled modunda:
+
+- Radial gradient kullanilir.
+- Taslarin ust sol tarafina parlaklik verilir.
+- Alt kisim koyulastirilir.
+- Ince bir dis cizgi eklenir.
+
+Outline modunda:
+
+- Sadece tas renginde daire cizilir.
+- Daire ic dolgusu yoktur.
+
+Bu gorunum gercek kristal yansimasinin basit bir gorsel temsilidir;
+fiziksel tas malzemesini birebir simulasyon olarak kabul edilmemelidir.
+
+============================================================
+10. ISTATISTIKLER
+============================================================
+
+Istatistik dosyasi:
+client/src/components/StatsBar.tsx
+
+Gosterilen bilgiler:
+
+- Toplam tas sayisi
+- Canvas genisligi ve yuksekligi
+- Renk grubu sayisi
+- SS boyutlarina gore tas sayilari
+
+Bu degerler istemci tarafinda uretilen StonePattern nesnesinden
+hesaplanir.
+
+Bunlar su bilgileri ifade etmez:
+
+- Gercek makine toleransi
+- Fiziksel mm hatasi
+- Tas merkez hatasi
+- Tas yaricap hatasi
+- Uretime hazirlik raporu
+
+============================================================
+11. EXPORT SISTEMI
+============================================================
+
+11.1 SVG
+
+Her tas SVG icinde bir circle elementi olarak yazilir.
+
+SVG:
+
+- Canvas/pixel boyutlarini kullanir.
+- Her tasi ayri circle olarak saklar.
+- Filled ve outline stillerini destekler.
+
+11.2 DXF
+
+Her tas DXF icinde bir CIRCLE entity olarak yazilir.
+
+Kullanilan istemci olcegi:
+scale = 0.1
+
+Bu nedenle DXF fiziksel boyutu, sabit olcek katsayisina ve kaynak
+olcusune baglidir. RhinestoneFill ekraninda gorselin gercek mm genisligi
+alinmadigi icin DXF ciktisi tam fiziksel kalibrasyonlu kabul edilmemelidir.
+
+11.3 PLT
+
+Her tas 36 segmentli bir daire yolu olarak yazilir.
+
+Komut mantigi:
+
+PU -> Dairenin ilk noktasina git
+PD -> Dairenin cevresindeki noktalar
+PU -> Sonraki tasa gec
+
+Kullanilan istemci olcegi:
+scale = 40
+
+Bu da makineye ozel kalibrasyon yerine sabit bir cizim olcegi kullanildigi
+anlamina gelir.
+
+============================================================
+12. OTOMATIK KAYIT
+============================================================
+
+RhinestoneFill islemi tamamlandiginda cikti otomatik olarak Dashboard'a
+kaydedilir.
+
+Kullanilan endpoint:
+POST /api/production-saves
+
+Gonderilen bilgiler:
+
+- mode = rhinestone
+- name = kaynak dosya adi
+- svg = uretilen SVG metni
+- dxf = uretilen DXF metni
+- plt = uretilen PLT metni
+
+Sunucu tarafinda:
+
+1. Lisans kontrolu yapilir.
+2. SVG, DXF ve PLT dosyalari diske yazilir.
+3. SVG'den PDF olusturulur.
+4. Pattern veritabani kaydi olusturulur.
+5. Kayit tamamlandi olarak isaretlenir.
+6. Kayit archived durumuna alinir.
+7. Dashboard listesi yenilenir.
+
+Onemli nokta:
+PLT dosyasi diske yazilsa da pattern kaydinda SVG ve DXF baglantilari
+kadar belirgin bir PLT URL alani bulunmamaktadir. Bu nedenle PLT'nin
+Dashboard uzerinden erisimi ayri olarak ele alinmamis olabilir.
+
+============================================================
+13. AUTHENTICATION VE KULLANICI IZOLASYONU
+============================================================
+
+/api/production-saves endpoint'i authenticateToken middleware'i ile
+korunur.
+
+Olusturulan pattern kullanici ID'si ile kaydedilir:
+
+userId = req.user.userId
+
+Dashboard listesi de kullanici ID'sine gore alinir.
+
+Sonuc olarak bir kullanicinin olusturdugu RhinestoneFill ciktilari
+baska kullanicinin pattern listesine dahil edilmemelidir.
+
+RhinestoneFill'in asil gorsel isleme islemi tarayicida yapilir. Kaynak
+gorselin tamami bu akista sunucuya yuklenmez; uretilen SVG, DXF ve PLT
+icerikleri kayit icin sunucuya gonderilir.
+
+============================================================
+14. SUNUCU TARAFINDAKI RHINESTONE DETECTION SISTEMI
+============================================================
+
+Ana dosya:
+server/image-worker.ts
+
+Bu sistem RhinestoneFill ekranindaki istemci motorundan farklidir.
+Amaci gorselde zaten bulunan rhinestone dairelerini algilamak ve
+uretim icin duzenlemektir.
+
+Genel zincir:
+
+Dosya yukle
+  -> Rhinestone/hybrid kategorisini belirle
+  -> Gerekirse PNG'ye cevir
+  -> Sharp ile yeniden boyutlandir
+  -> Istege bagli ControlNet iyilestirmesi
+  -> Gri ton ve saturation analizi
+  -> Adaptive contrast threshold
+  -> Morphological opening/closing
+  -> Distance transform
+  -> Peak/component tespiti
+  -> Watershed ile ayirma
+  -> Hough yaricap tahmini
+  -> Least-squares circle fit
+  -> Kalibrasyon ve hedef SS olcusu
+  -> Kalite filtresi
+  -> Duplicate temizleme
+  -> Overlap/spacing duzeltme
+  -> Region ve boyut filtreleme
+  -> SVG/PDF ve pattern ciktilari
+
+14.1 On isleme
+
+Sharp ile:
+
+- Gorsel yeniden boyutlandirilir.
+- Alpha kanali kaldirilir.
+- sRGB renk uzayina cevrilir.
+- Kayıplı gorsellerde median ve sharpen islemleri uygulanir.
+- Gri tonlu normalize edilmis kopya hazirlanir.
+- Renk saturation degerleri hesaplanir.
+
+14.2 Adaptive threshold
+
+Sunucu sistemi sabit threshold yerine su bilgileri birlikte kullanir:
+
+- Gri ton ortalamasi
+- Gri ton standart sapmasi
+- Ortalama saturation
+- Gorselin PDF veya raster olmasi
+- Stone sensitivity degeri
+
+Dusuk kontrastli veya fazla acik/koyu gorsellerde sensitivity
+otomatik olarak ayarlanir.
+
+14.3 Morphological islemler
+
+Binary maske uzerinde erosion, dilation, opening ve closing islemleri
+uygulanir.
+
+Amac:
+
+- Gurultuyu azaltmak
+- Bitisik taslari ayirmak
+- Kirik bolgeleri birlestirmek
+- Yanlis pozitifleri azaltmak
+
+14.4 Daire merkezleri
+
+Sistem distance peaks ve component peaks yaklasimlarini kullanir.
+PDF dosyalarinda iki sonuc birlestirilir.
+
+Dusuk kontrastli veya yogun desenlerde watershed splitting ile bitisik
+taslarin birbirinden ayrilmasi denenir.
+
+14.5 Daire yaricapi ve merkezi
+
+Her aday tas icin:
+
+- Hough tabanli yaricap tahmini
+- Kenar noktalarinin toplanmasi
+- Least-squares circle fitting
+- Subpixel merkez duzeltmesi
+
+uygulanir.
+
+14.6 Kalibrasyon
+
+Sunucu tarafinda olcek su kaynaklardan belirlenebilir:
+
+1. Kullanici kalibrasyonu:
+   - calibrationDiameterPx
+   - calibrationDiameterMm
+
+2. Ortam degiskeni:
+   - RHINESTONE_FIXED_PX_PER_MM
+
+3. Gorselin gercek genisligi:
+   - realWidthMm
+
+Bunlar yoksa varsayilan sabit pxPerMm kullanilir.
+
+14.7 Kalite ve tolerans
+
+Her tas icin:
+
+- Center error
+- Radius error
+- Fit residual
+- Confidence
+- Precision mode
+- Overlap bilgisi
+
+hesaplanir.
+
+Sonra:
+
+- Dusuk kaliteli adaylar elenir.
+- Duplicate taslar temizlenir.
+- Minimum merkez mesafesi uygulanir.
+- SS koduna gore spacing kurallari kullanilir.
+- Uretim toleranslari kontrol edilir.
+
+Sonuc productionReady true veya false olarak raporlanir.
+
+============================================================
+15. IKI SISTEMIN FARKI
+============================================================
+
+RhinestoneFill:
+
+- Tarayicida calisir.
+- Renk bolgelerini analiz eder.
+- Yeni taslar yerlestirir.
+- Hexagonal fill kullanir.
+- Multi-size destekler.
+- SVG, DXF ve PLT uretir.
+- Uretim toleransi raporu vermez.
+
+Sunucu Rhinestone Worker:
+
+- Node.js sunucusunda calisir.
+- Mevcut taslari algilar.
+- Hough ve circle fitting kullanir.
+- Watershed ve morphological islemler uygular.
+- Kalibrasyon destekler.
+- Uretim toleransi ve confidence raporu verir.
+- Pattern upload/processing akisi ile calisir.
+
+Ayni gorsel iki farkli ekranda islenirse tas sayisi, tas merkezleri,
+yaricaplar ve cikti davranisi farkli olabilir.
+
+============================================================
+16. GUC LU YANLAR
+============================================================
+
+- Tarayicida hizli onizleme saglar.
+- Renk bolgelerini korumaya calisir.
+- Hexagonal tas yerlesimi kullanir.
+- Multi-size dolgu destegi vardir.
+- Tas cakismalarini azaltir.
+- SVG, DXF ve PLT ciktilari uretir.
+- Sonucu Dashboard'a otomatik kaydeder.
+- Authentication ve kullanici izolasyonu ile korunur.
+- Sunucu tarafinda daha gelismis rhinestone detection altyapisi vardir.
+- Sunucu worker'inda kalibrasyon ve uretim toleransi kontrolleri bulunur.
+
+============================================================
+17. SINIRLAMALAR VE RISKLER
+============================================================
+
+1. RhinestoneFill fiziksel olarak tam kalibre degildir.
+   Gorsel maksimum 600 px'e kucultulur ve DXF/PLT sabit olcek kullanir.
+
+2. Dolgu alanlari renk kumelerine baglidir.
+   Sistem geometrik kapali alanlari dogrudan kesfetmez.
+
+3. Benzer renkler ayni gruba girebilir.
+   Gradient veya karmaşık desenlerde beklenmeyen maskeler olusabilir.
+
+4. Kenar kontrolu tam geometrik degildir.
+   Bazi kenar taslari alan disina hafif tasabilir.
+
+5. Tarayici ana thread'i yogun kullanilabilir.
+   Cok renkli ve detayli gorsellerde islem suresi artabilir.
+
+6. Istemci ve sunucu algoritmalari farklidir.
+   Ayni gorselde farkli tas dizilimleri olusabilir.
+
+7. Istemci istatistikleri uretim raporu degildir.
+   Center error, radius error ve machine tolerance bilgileri istemci
+   RhinestoneFill ekraninda bulunmaz.
+
+8. PLT otomatik kaydedilse de Dashboard erisimi SVG/DXF kadar belirgin
+   olmayabilir.
+
+============================================================
+18. SONUC
+============================================================
+
+RhinestoneFill, bir raster gorseli renk bolgelerine ayirip bu alanlarin
+icine hexagonal duzende rhinestone taslari yerlestiren, tarayici tabanli
+otomatik dolgu ve export sistemidir.
+
+Sistem su islemleri yapar:
+
+- Gorseli kucultur ve ImageData'ya cevirir.
+- Renkleri k-means yaklasimiyla gruplandirir.
+- Her renk icin maske olusturur.
+- Buyuk ve kucuk taslari alana yerlestirir.
+- Tas cakismalarini temizler.
+- Canvas onizlemesi uretir.
+- SVG, DXF ve PLT ciktilari hazirlar.
+- Sonucu authenticated API ile Dashboard'a kaydeder.
+
+Projede ayrica daha gelismis bir sunucu rhinestone detection sistemi
+bulunmaktadir. Bu ikinci sistem mevcut rhinestone taslarini tespit eder,
+olcer, kalibre eder ve uretim toleranslarina gore degerlendirir.
+
+Mevcut mimaride bu iki motor ortak bir uretim motoru altinda
+birlesmemistir. Bu nedenle RhinestoneFill daha cok otomatik dolgu ve
+hizli cikti uretimi icin; sunucu worker'i ise mevcut rhinestone taslarinin
+profesyonel tespiti, kalibrasyonu ve uretim kontrolu icin kullanilmaktadir.
