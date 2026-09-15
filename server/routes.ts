@@ -512,16 +512,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         await fsp.writeFile(pltFs, plt, "utf-8");
         debugLog("PLT WRITE END");
       }
-      currentStage = "pdf-generation";
-      debugLog("PDF START");
-      const pdfBuffer = await renderSvgToPdfBuffer(svg);
-      debugLog("PDF END");
-      debugLog(`PDF bytes=${pdfBuffer.byteLength}`);
-      currentStage = "pdf-write";
-      debugLog("PDF WRITE START");
-      await fsp.writeFile(pdfFs, pdfBuffer);
-      debugLog("PDF WRITE END");
-
       const svgUrl = `/processed/${base}.svg`;
       const dxfUrl = dxf.trim().length > 0 ?`/processed/${base}.dxf` : null;
       currentStage = "db-insert";
@@ -547,6 +537,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       debugLog("UPDATE PATTERN ARCHIVE END");
       currentStage = "complete";
       debugLog("COMPLETE status=201");
+      setImmediate(() => {
+        const pdfStartedAt = Date.now();
+        debugLog("PDF ASYNC START");
+        void (async () => {
+          try {
+            const pdfBuffer = await renderSvgToPdfBuffer(svg);
+            debugLog(`PDF ASYNC END elapsed=${Date.now() - pdfStartedAt}ms`);
+            debugLog(`PDF bytes=${pdfBuffer.byteLength}`);
+            debugLog("PDF ASYNC WRITE START");
+            await fsp.writeFile(pdfFs, pdfBuffer);
+            debugLog(`PDF ASYNC WRITE END elapsed=${Date.now() - pdfStartedAt}ms`);
+          } catch (error) {
+            const errorType = error instanceof Error ? error.constructor.name : typeof error;
+            const message = error instanceof Error ? error.message : String(error);
+            const stack = error instanceof Error ? error.stack ?? error.message : String(error);
+            logError(
+              `[PRODUCTION-SAVE][${requestId}] PDF ASYNC ERROR type=${errorType} message=${message} total=${elapsed()}ms stack=${stack}`,
+            );
+          }
+        })();
+      });
       void trackEvent({ userId: Number(req.user.userId), event: "SVG_EXPORT", page: "/production-edit", metadata: { format: "svg" } });
       if (dxfUrl) void trackEvent({ userId: Number(req.user.userId), event: "DXF_EXPORT", page: "/production-edit", metadata: { format: "dxf" } });
       void trackEvent({ userId: Number(req.user.userId), event: "PDF_EXPORT", page: "/production-edit", metadata: { format: "pdf" } });
